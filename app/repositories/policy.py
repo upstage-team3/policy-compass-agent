@@ -181,7 +181,9 @@ def _normalize_bizinfo_item(item: dict[str, Any]) -> dict[str, Any]:
         "title": title,
         "agency": item.get("jrsdInsttNm") or item.get("author") or "기업마당",
         "category": _normalize_category(category),
-        "target_description": item.get("trgetNm") or "중소기업, 소상공인 또는 예비창업자 등 공고별 대상",
+        "target_description": (
+            item.get("trgetNm") or "중소기업, 소상공인 또는 예비창업자 등 공고별 대상"
+        ),
         "region": regions or ["전국"],
         "min_age": None,
         "max_age": None,

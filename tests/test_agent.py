@@ -67,7 +67,11 @@ def test_score_policy_region_match_scores_higher_than_mismatch():
         "apply_end": None,
     }
     matching_profile = {"region": "서울", "age": 25, "employment_status": "unemployed_seeking_job"}
-    mismatched_profile = {"region": "부산", "age": 25, "employment_status": "unemployed_seeking_job"}
+    mismatched_profile = {
+        "region": "부산",
+        "age": 25,
+        "employment_status": "unemployed_seeking_job",
+    }
 
     match_score = score_policy(matching_profile, policy)["match_score"]
     mismatch_score = score_policy(mismatched_profile, policy)["match_score"]
@@ -108,6 +112,9 @@ async def test_guardrail_node_softens_absolute_language_and_adds_disclaimer():
     }
     result = await nodes.guardrail_node(state)
 
-    assert "반드시" not in result["final_response"] or "신청 가능성이 높아요" in result["final_response"]
+    assert (
+        "반드시" not in result["final_response"]
+        or "신청 가능성이 높아요" in result["final_response"]
+    )
     assert "확인해주세요" in result["final_response"]
     assert result["guardrail_notes"]

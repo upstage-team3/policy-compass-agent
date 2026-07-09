@@ -96,7 +96,11 @@ def score_policy(
 
     interest_fields = set(profile.get("interest_fields") or [])
     if interest_fields:
-        haystack = f"{policy.get('category', '')} {policy.get('support_content', '')} {policy.get('title', '')}"
+        haystack = (
+            f"{policy.get('category', '')} "
+            f"{policy.get('support_content', '')} "
+            f"{policy.get('title', '')}"
+        )
         if any(field in haystack for field in interest_fields):
             score += 0.15
             reasons.append("관심 분야와 관련된 사업이에요.")
@@ -110,7 +114,10 @@ def score_policy(
 
     score = max(0.0, min(1.0, round(score, 2)))
     if not reasons:
-        reasons.append("입력하신 조건과 대략적으로 관련이 있는 사업이에요. 상세 조건은 공고문에서 확인해주세요.")
+        reasons.append(
+            "입력하신 조건과 대략적으로 관련이 있는 사업이에요. "
+            "상세 조건은 공고문에서 확인해주세요."
+        )
 
     return {
         "policy": policy,

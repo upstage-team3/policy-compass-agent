@@ -46,8 +46,23 @@ _EMPLOYED_KEYWORDS = ["재직", "직장인", "다니고 있"]
 _STUDENT_KEYWORDS = ["대학생", "재학"]
 _OUT_OF_SCOPE_KEYWORDS = ["세무 상담", "법률 자문", "소송", "대출 상담", "회계 처리", "변호사"]
 _EXPLAIN_KEYWORDS = ["무엇인가요", "뭐야", "설명해", "어떤 내용", "무슨 사업"]
-_ELIGIBILITY_KEYWORDS = ["자격 되나요", "신청 가능한가요", "받을 수 있나요", "해당되나요", "자격이 되는지"]
-_RECOMMEND_KEYWORDS = ["추천", "지원사업", "지원금", "정책", "받을 수 있는", "찾아줘", "있을까", "있어"]
+_ELIGIBILITY_KEYWORDS = [
+    "자격 되나요",
+    "신청 가능한가요",
+    "받을 수 있나요",
+    "해당되나요",
+    "자격이 되는지",
+]
+_RECOMMEND_KEYWORDS = [
+    "추천",
+    "지원사업",
+    "지원금",
+    "정책",
+    "받을 수 있는",
+    "찾아줘",
+    "있을까",
+    "있어",
+]
 
 _INTEREST_KEYWORDS = {
     "IT": ["IT", "개발", "프로그래밍", "소프트웨어", "앱"],
@@ -315,13 +330,17 @@ async def explain_node(state: AgentState) -> dict[str, Any]:
     policy = await _policy_repo.find_best_title_match(query)
     if not policy:
         return {
-            "final_response": "어떤 지원사업에 대해 설명이 필요하신지 사업명을 조금 더 구체적으로 알려주시겠어요?"
+            "final_response": (
+                "어떤 지원사업에 대해 설명이 필요하신지 "
+                "사업명을 조금 더 구체적으로 알려주시겠어요?"
+            )
         }
     text = (
         f"'{policy['title']}'({policy['agency']}) 안내드릴게요.\n"
         f"- 지원 대상: {policy['target_description']}\n"
         f"- 지원 내용: {policy['support_content']}\n"
-        f"- 신청 기간: {policy.get('apply_start') or '상시'} ~ {policy.get('apply_end') or '상시'}\n"
+        "- 신청 기간: "
+        f"{policy.get('apply_start') or '상시'} ~ {policy.get('apply_end') or '상시'}\n"
         f"- 신청 방법: {policy['apply_method']}\n"
         f"- 원문 링크: {policy['source_url']}"
     )
@@ -342,11 +361,16 @@ async def out_of_scope_node(state: AgentState) -> dict[str, Any]:  # noqa: ARG00
 
 _FORBIDDEN_PATTERNS = [
     (re.compile(r"반드시\s*(신청|지원)\s*가능(합니다|해요)?"), "신청 가능성이 높아요"),
-    (re.compile(r"무조건\s*(지원|선정)?\s*(됩니다|돼요|가능합니다)?"), "높은 확률로 도움이 될 수 있어요"),
+    (
+        re.compile(r"무조건\s*(지원|선정)?\s*(됩니다|돼요|가능합니다)?"),
+        "높은 확률로 도움이 될 수 있어요",
+    ),
     (re.compile(r"100\s*%\s*(확실|가능)"), "가능성이 높지만 추가 확인이 필요"),
 ]
 
-_DISCLAIMER = "\n\n※ 최종 자격 및 신청 가능 여부는 공식 공고문 또는 담당 기관을 통해 꼭 확인해주세요."
+_DISCLAIMER = (
+    "\n\n※ 최종 자격 및 신청 가능 여부는 공식 공고문 또는 담당 기관을 통해 꼭 확인해주세요."
+)
 
 
 async def guardrail_node(state: AgentState) -> dict[str, Any]:
