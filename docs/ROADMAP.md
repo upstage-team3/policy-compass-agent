@@ -159,3 +159,114 @@ FastAPI 단일 서버 (:8000)
 - 데모 영상 제출
 - GitHub 프로젝트 제출
 - 발표 및 Q&A 완료
+
+## DB 기반 고도화 계획
+
+현재 프로젝트는 기업마당 Open API 또는 `data/mock_policies.json`을 통해 정책 데이터를 가져오고, LangGraph Agent가 조건 추출 -> 누락 조건 확인 -> 정책 검색 -> 자격 점수화 -> 답변 생성을 수행하는 MVP 구조다.
+
+평가 기준과 서비스 완성도를 고려하면 다음 단계에서는 외부 API를 실시간으로 직접 조회하는 방식보다, 외부 정책 데이터를 내부 표준 스키마로 정규화해 DB에 저장하고 Agent가 DB를 조회하는 구조가 더 적합하다.
+
+권장 목표 구조:
+
+```text
+기업마당 API / mock API 응답 / 정책 문서
+-> Ingestion Service
+-> 정규화 및 검증
+-> DB 저장
+-> PolicyRepository
+-> PolicySearchTool
+-> LangGraph Agent
+-> 사용자 답변
+```
+
+### DB 도입 범위
+
+MVP 고도화 단계에서는 PostgreSQL 또는 Supabase를 기준으로 다음 데이터를 저장한다.
+
+- `policies`: 정규화된 정책 공고 데이터
+- `policy_sources`: 기업마당 API 원본 응답 및 출처 정보
+- `chat_sessions`: 사용자 대화 세션
+- `chat_messages`: 세션별 대화 이력
+- `policy_documents`: 추후 정책 공고 PDF/첨부 문서 저장 및 파싱 결과 연결
+- `policy_chunks` / `policy_embeddings`: 추후 pgvector 기반 RAG 확장용
+
+초기 구현에서는 `policies`, `policy_sources`, `chat_sessions`, `chat_messages`를 우선 적용하고, 문서 파싱과 임베딩 검색은 확장 가능하도록 인터페이스와 스키마만 설계한다.
+
+### 계층 분리 방향
+
+현재 구조는 FastAPI 라우트, LangGraph 노드, Tool, Repository가 분리되어 있지만, `PolicyRepository`가 외부 API 호출, mock fallback, 정규화, 데이터 조회 역할을 함께 가지고 있다.
+
+다음 단계에서는 역할을 더 명확히 나눈다.
+
+- Controller: `app/api/routes`, HTTP 요청/응답만 담당
+- Service: `app/services`, 정책 수집/검색/추천 흐름 조율
+- Repository: `app/repositories`, DB 읽기/쓰기만 담당
+- Tool: `app/tools`, Agent가 호출하는 기능 인터페이스
+- Schema: `app/schemas`, API 및 내부 데이터 계약 정의
+
+예상 추가 모듈:
+
+- `app/services/policy_ingestion.py`
+- `app/services/policy_search.py`
+- `app/repositories/policy_db.py`
+- `app/repositories/chat_session.py`
+- `data/mock_bizinfo_api_response.json`
+- `data/scripts/seed_policies.py`
+
+### Tool Schema 및 누락 조건 질문
+
+Tool Schema는 Agent가 도구를 호출할 때 사용하는 입력 계약이다. 챗봇은 사용자 입력에서 조건을 추출한 뒤, Tool Schema 기준으로 필수 조건이 부족한지 판단하고, 부족하면 바로 검색하지 않고 되묻는다.
+
+정책 추천 Tool의 주요 입력 필드:
+
+- `region`
+- `age`
+- `employment_status`
+- `is_entrepreneur`
+- `has_registered_business`
+- `business_stage`
+- `interest_categories`
+- `preferred_support_type`
+- `income_level`
+- `limit`
+
+최소 추천 조건은 `region`, `age`, `employment_status`, `is_entrepreneur`로 두고, 사업자 등록 여부나 관심 분야는 추천 품질을 높이는 선택 조건으로 처리한다. 단, 창업/소상공인 정책을 추천할 때는 `has_registered_business` 또는 `business_stage`가 부족하면 추가 질문을 우선한다.
+
+### Mock 데이터와 실제 API 호환성
+
+실연동 전환 시 깨지지 않도록 mock 데이터도 실제 API 응답과 내부 표준 데이터로 분리한다.
+
+- `mock_bizinfo_api_response.json`: 기업마당 API 응답 형태를 흉내낸 원본 mock
+- `mock_policies.json`: 내부 표준 정책 스키마에 맞춘 정규화 mock
+
+API 응답과 mock API 응답은 같은 normalizer를 거쳐 DB에 저장되도록 한다.
+
+### Upstage Document Parse / Information Extract 확장
+
+정책 공고는 API 필드만으로는 지원 대상, 제외 조건, 제출 서류, 신청 절차가 부족할 수 있다. 추후 Upstage Document Parse와 Information Extract를 활용해 공고 PDF/HTML/첨부 문서에서 구조화 정보를 추출하는 흐름을 추가한다.
+
+예상 흐름:
+
+```text
+정책 공고 문서 수집
+-> Upstage Document Parse
+-> Information Extract
+-> 신청 대상 / 지원 내용 / 신청 기간 / 제외 조건 / 제출 서류 추출
+-> DB 저장
+-> Agent 답변 근거로 활용
+```
+
+MVP에서는 전체 문서 자동 파싱을 Out of Scope로 두되, 아키텍처와 테이블 설계에는 반영한다.
+
+### Out of Scope
+
+- 모든 정부지원사업 실시간 동기화
+- 모든 첨부 문서 자동 파싱
+- 최종 자격 판정
+- 민감 개인정보 저장
+- 신청 대행
+- 법률/세무/노무 판단
+
+### 기획 설명 문장
+
+외부 정책 API와 공고 문서를 내부 표준 정책 스키마로 정규화해 DB에 저장하고, Agent는 저장된 정책 카탈로그와 근거 데이터를 기반으로 추천하므로 외부 API 장애에 강하고 추천 결과를 재현할 수 있다.

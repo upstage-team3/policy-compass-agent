@@ -90,3 +90,22 @@
 - 현재 실제 키가 있으면 LLM 응답이 활성화될 수 있으므로, 발표 전 프롬프트/가드레일 품질을 반드시 확인한다.
 - 기업마당 API 응답 필드는 실제 공고마다 비어 있을 수 있어 정규화 품질 보강이 필요하다.
 - 기존 작은 구조의 백업은 `_merge_backup_before_team_structure`에 남아 있으나 GitHub 업로드 전 포함 여부를 확인해야 한다.
+
+## 다음 고도화 방향: DB 기반 Agent 서비스
+
+현재 구현은 정책 추천 챗봇 MVP로서 FastAPI, LangGraph Agent, 정책 검색 Tool, 기업마당 API 연동 구조, mock fallback, RAG-lite 검색, 누락 조건 질문 흐름을 포함한다.
+
+다음 단계의 핵심 목표는 현재의 API/mock JSON 기반 구조를 DB 중심 구조로 전환해 추천 결과의 재현성, 장애 대응력, 평가 설득력을 높이는 것이다.
+
+우선순위는 다음과 같다.
+
+1. 정책 데이터를 PostgreSQL 또는 Supabase에 저장한다.
+2. 기업마당 API와 mock 응답을 같은 normalizer로 정규화한 뒤 DB에 upsert한다.
+3. `PolicyRepository`는 DB 접근만 담당하도록 줄이고, 외부 API 수집은 `PolicyIngestionService`로 분리한다.
+4. `PolicySearchTool`은 명확한 Pydantic Tool Schema를 기준으로 호출되도록 유지한다.
+5. 누락 조건이 있을 때는 Tool을 바로 호출하지 않고 챗봇이 먼저 되묻도록 Missing Slot 흐름을 강화한다.
+6. Upstage Document Parse / Information Extract는 정책 공고 문서 파싱 확장 설계로 반영하되, MVP에서는 전체 자동 파싱을 Out of Scope로 둔다.
+
+설명 문장:
+
+> 외부 정책 API와 공고 문서를 내부 표준 정책 스키마로 정규화해 DB에 저장하고, Agent는 저장된 정책 카탈로그와 근거 데이터를 기반으로 추천하므로 외부 API 장애에 강하고 추천 결과를 재현할 수 있다.

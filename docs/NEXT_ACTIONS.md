@@ -71,3 +71,54 @@
 - [ ] LLM 사용 시에도 출처 없는 정책 정보가 생성되지 않는다.
 - [ ] Docker Compose가 8000 포트에서 정상 실행된다.
 - [ ] `.env`가 GitHub에 올라가지 않는다.
+
+## DB 기반 고도화 작업 체크리스트
+
+### 1. DB 및 스키마
+
+- [ ] PostgreSQL 또는 Supabase 중 실제 적용 대상을 결정한다.
+- [ ] `policies` 테이블을 현재 `PolicyItem` 스키마 기준으로 정리한다.
+- [ ] `policy_sources` 테이블에 기업마당 API 원본 응답과 출처 URL을 저장한다.
+- [ ] `chat_sessions`, `chat_messages` 테이블로 대화 이력을 저장할 수 있게 한다.
+- [ ] 추후 RAG 확장을 위해 `policy_documents`, `policy_chunks`, `policy_embeddings` 설계를 문서화한다.
+- [ ] `data/supabase_schema.sql`을 실제 MVP 스키마 기준으로 갱신한다.
+
+### 2. 데이터 수집 및 Seed
+
+- [ ] `data/mock_bizinfo_api_response.json`을 추가해 실제 기업마당 API 응답 형태의 mock을 만든다.
+- [ ] API 응답과 mock API 응답이 같은 normalizer를 거치도록 정리한다.
+- [ ] `data/scripts/seed_policies.py`를 추가해 mock 정책 데이터를 DB에 적재한다.
+- [ ] 기업마당 API 호출 결과를 DB에 upsert하는 `PolicyIngestionService`를 추가한다.
+- [ ] API 호출 실패 시 기존 mock fallback이 아니라, 마지막으로 저장된 DB 데이터를 우선 사용하도록 전환한다.
+
+### 3. 계층 분리
+
+- [ ] `app/services/policy_ingestion.py`를 추가한다.
+- [ ] `app/services/policy_search.py`를 추가한다.
+- [ ] `app/repositories/policy.py`에서 외부 API 호출 책임을 분리한다.
+- [ ] `app/repositories/policy_db.py` 또는 기존 repository를 DB 조회/저장 전용으로 정리한다.
+- [ ] FastAPI route는 Service 호출만 담당하도록 단순화한다.
+- [ ] Tool은 Agent가 필요한 입력/출력 계약만 유지하도록 정리한다.
+
+### 4. Tool Schema 및 Missing Slot
+
+- [ ] `PolicySearchInput`에 `business_stage`, `preferred_support_type`, `income_level` 등 추천 품질을 높이는 선택 필드를 검토한다.
+- [ ] 최소 추천 조건을 `region`, `age`, `employment_status`, `is_entrepreneur` 기준으로 정리한다.
+- [ ] 창업/소상공인 정책에서는 `has_registered_business` 또는 `business_stage`가 부족할 때 추가 질문을 하도록 보강한다.
+- [ ] 누락 조건 질문 문구를 사용자 친화적으로 정리한다.
+- [ ] 조건이 부족한 상태에서는 정책 검색 Tool을 호출하지 않는 테스트를 추가한다.
+
+### 5. 문서 파싱 확장 설계
+
+- [ ] Upstage Document Parse를 정책 공고 PDF/HTML/첨부 문서 처리 후보로 문서화한다.
+- [ ] Information Extract로 신청 대상, 지원 내용, 신청 기간, 제외 조건, 제출 서류를 추출하는 흐름을 설계한다.
+- [ ] MVP에서는 전체 문서 자동 파싱을 Out of Scope로 명시한다.
+- [ ] 추후 구현을 위해 `policy_documents`와 추출 필드 저장 구조를 남긴다.
+
+### 6. README 및 발표 자료 반영
+
+- [ ] DB를 쓰는 이유를 README에 추가한다.
+- [ ] 외부 API를 직접 조회하지 않고 DB에 저장한 뒤 조회하는 이유를 설명한다.
+- [ ] Controller / Service / Repository / Tool 계층 구조를 다이어그램으로 정리한다.
+- [ ] Tool Schema와 누락 조건 되묻기 전략을 설명한다.
+- [ ] MVP 범위와 Out of Scope를 명확히 분리한다.
