@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -31,7 +32,10 @@ class Settings(BaseSettings):
 
     # 기업마당 Open API - 미설정 시 data/mock_policies.json 사용
     bizinfo_api_key: str | None = None
-    bizinfo_base_url: str = "https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do"
+    bizinfo_base_url: str = Field(
+        default="https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do",
+        validation_alias=AliasChoices("BIZINFO_BASE_URL", "BIZINFO_API_URL"),
+    )
     use_mock_policy_data: bool = True
 
     data_dir: Path = BASE_DIR / "data"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -20,7 +21,7 @@ class UserProfile(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    session_id: str
+    session_id: str = Field(default_factory=lambda: str(uuid4()))
     message: str
 
 

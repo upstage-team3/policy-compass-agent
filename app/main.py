@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import chat, health, policies
 from app.core.config import get_settings
+from app.schemas.chat import ChatRequest
 
 logging.basicConfig(level=logging.INFO)
 
@@ -47,6 +48,32 @@ def create_app() -> FastAPI:
     @app.get("/")
     async def root() -> FileResponse:
         return FileResponse(str(STATIC_DIR / "index.html"))
+
+    @app.get("/health")
+    async def legacy_health() -> dict[str, str]:
+        return {"status": "ok", "service": "policy-compass"}
+
+    @app.post("/api/v1/chat/sync")
+    async def legacy_chat_sync(payload: ChatRequest) -> dict:
+        result = await chat._run_agent(payload)  # noqa: SLF001 - compatibility wrapper
+        return {
+            "answer": result.get("final_response", ""),
+            "intent": result.get("intent", "GENERAL"),
+            "profile": result.get("profile") or {},
+            "recommendations": result.get("scored_results", []),
+            "citations": [
+                {
+                    "title": item.get("policy", {}).get("title"),
+                    "url": item.get("policy", {}).get("source_url"),
+                    "source": item.get("policy", {}).get("agency"),
+                }
+                for item in result.get("scored_results", [])
+            ],
+        }
+
+    @app.post("/api/v1/chat")
+    async def legacy_chat_stream(payload: ChatRequest):
+        return await chat.chat_stream(payload)
 
     return app
 

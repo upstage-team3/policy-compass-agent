@@ -1,36 +1,49 @@
 [project]
-name = "policy-compass-agent"
+name = "policy-compass"
 version = "0.1.0"
-description = "정책나침반 - 사용자 조건 기반 정부 지원사업 추천 AI Agent"
+description = "Policy Compass - 사용자 조건 기반 정부 지원사업 추천 및 신청 준비 상담 AI Agent"
 readme = "README.md"
 requires-python = ">=3.11"
+keywords = [
+    "policy-recommendation",
+    "government-support-programs",
+    "bizinfo",
+    "ai-agent",
+    "langgraph",
+    "upstage",
+    "fastapi",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Natural Language :: Korean",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
-    "pydantic>=2.9.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0",
     "pydantic-settings>=2.5.0",
-    "langgraph>=0.2.45",
-    "langchain-core>=0.3.15",
     "httpx>=0.27.0",
-    "python-dotenv>=1.0.1",
+    "langchain-core>=0.3.0,<0.4.0",
+    "langchain-upstage>=0.3.0,<0.4.0",
+    "langgraph>=0.2.0,<0.3.0",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
-    "pytest>=8.3.0",
+    "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "ruff>=0.7.0",
     "pre-commit>=3.8.0",
 ]
-ui = [
-    "gradio>=4.44.0",
-]
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
+[tool.setuptools]
 packages = ["app"]
 
 [tool.ruff]
