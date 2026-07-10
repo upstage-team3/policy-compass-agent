@@ -81,7 +81,7 @@ jobs:
 
       # run: 셸 명령을 직접 실행하는 문법 (로컬 터미널에서 치는 것과 동일)
       - name: Install dependencies
-        run: uv sync --extra dev           # pytest·ruff 등 개발 도구 포함 설치
+        run: uv sync --group dev           # pytest·ruff 등 개발 도구 포함 설치
 
       - name: Run Ruff (lint)
         # 린트: 안 쓰는 import·문법 실수 등을 잡음
@@ -110,7 +110,7 @@ jobs:
           version: "latest"
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --group dev
 
       - name: Run tests
         # env: 이 스텝에서만 쓰는 환경변수.
@@ -172,7 +172,7 @@ jobs:
 
   # ═══════════════════════════════════════════════════════════════
   # Job 4: AI Code Review (Solar LLM이 변경사항을 리뷰)
-  # 로컬에서 미리 돌려보기: uv run python scripts/ai_reviewer.py
+  # scripts/ai_reviewer.py가 있는 경우에만 실행한다.
   # ═══════════════════════════════════════════════════════════════
   ai-review:
     name: AI Review
@@ -195,9 +195,10 @@ jobs:
           version: "latest"
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --group dev
 
       - name: Run AI Reviewer
+        if: ${{ hashFiles('scripts/ai_reviewer.py') != '' }}
         env:
           UPSTAGE_API_KEY: ${{ secrets.UPSTAGE_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

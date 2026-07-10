@@ -13,9 +13,13 @@ class AgentState(TypedDict, total=False):
     session_id: str
     user_input: str
     intent: str
+    request_kind: str
     profile: dict
     missing_slots: list[str]
     search_results: list[dict]
+    youth_policy_results: list[dict]
+    training_results: list[dict]
+    recruitment_results: list[dict]
     scored_results: list[dict]
     final_response: str
     guardrail_notes: list[str]

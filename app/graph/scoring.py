@@ -31,9 +31,7 @@ def deadline_status(apply_end: str | None, *, today: date | None = None) -> str:
     return "모집중"
 
 
-def score_policy(
-    profile: dict[str, Any], policy: dict[str, Any], *, today: date | None = None
-) -> dict[str, Any]:
+def score_policy(profile: dict[str, Any], policy: dict[str, Any], *, today: date | None = None) -> dict[str, Any]:
     """사용자 조건(profile)과 정책(policy)의 적합도를 0.0~1.0 사이 점수로 계산한다."""
 
     score = 0.0

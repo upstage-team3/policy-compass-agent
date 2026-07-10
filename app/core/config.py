@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -29,11 +30,39 @@ class Settings(BaseSettings):
     upstage_base_url: str = "https://api.upstage.ai/v1"
     upstage_model: str = "solar-pro2"
 
-    # 기업마당 Open API - 미설정 시 data/mock_policies.json 사용
-    bizinfo_api_key: str | None = None
-    bizinfo_base_url: str = "https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do"
-    use_mock_policy_data: bool = True
+    # 온통청년 청년정책 API
+    youthcenter_policy_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("YOUTHCENTER_POLICY_API_KEY", "YOUTHCENTER_API_KEY"),
+    )
+    youthcenter_policy_api_url: str = Field(
+        default="https://www.youthcenter.go.kr/opi/youthPlcyList.do",
+        validation_alias=AliasChoices("YOUTHCENTER_POLICY_API_URL", "YOUTHCENTER_API_URL"),
+    )
 
+    # 고용24/HRD-Net 국민내일배움카드 훈련과정 API
+    employment24_training_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("EMPLOYMENT24_TRAINING_API_KEY", "EMPLOYMENT24_API_KEY"),
+    )
+    employment24_training_api_url: str = Field(
+        default="https://www.work24.go.kr/cm/openApi/call/hr/callOpenApiSvcInfo310L01.do",
+        validation_alias=AliasChoices("EMPLOYMENT24_TRAINING_API_URL"),
+    )
+
+    # 고용24/워크넷 채용정보 API
+    employment24_job_api_key: str | None = None
+    employment24_job_api_url: str = Field(
+        default="https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L01.do",
+        validation_alias=AliasChoices("EMPLOYMENT24_JOB_API_URL", "EMPLOYMENT24_API_URL"),
+    )
+
+    # 기업마당 Open API - API 키가 없거나 호출에 실패하면 빈 결과 반환
+    bizinfo_api_key: str | None = None
+    bizinfo_base_url: str = Field(
+        default="https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do",
+        validation_alias=AliasChoices("BIZINFO_BASE_URL", "BIZINFO_API_URL"),
+    )
     data_dir: Path = BASE_DIR / "data"
 
 

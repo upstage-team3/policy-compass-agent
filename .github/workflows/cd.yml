@@ -163,7 +163,7 @@ jobs:
               cat > docker-compose.yml << 'COMPOSE_EOF'
             services:
               policy-compass-agent:
-                image: ${LUMI_IMAGE:-ghcr.io/owner/repo/policy-compass-agent:latest}
+                image: ${POLICY_COMPASS_IMAGE:-ghcr.io/owner/repo/policy-compass-agent:latest}
                 container_name: policy-compass-agent
                 restart: unless-stopped
                 ports:
@@ -171,7 +171,7 @@ jobs:
                 env_file:
                   - .env
                 healthcheck:
-                  test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health/"]
+                  test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
                   interval: 30s
                   timeout: 10s
                   retries: 3
@@ -225,7 +225,7 @@ jobs:
             MAX_RETRIES=12
             RETRY_INTERVAL=5
             for i in $(seq 1 $MAX_RETRIES); do
-              HTTP_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" http://localhost:8000/api/v1/health/ 2>/dev/null || echo "000")
+              HTTP_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" http://localhost:8000/api/health 2>/dev/null || echo "000")
               if [ "$HTTP_STATUS" -eq 200 ]; then
                 echo "✅ 서버 정상 (HTTP $HTTP_STATUS)"
                 break
@@ -291,14 +291,14 @@ jobs:
             docker pull ${PREV_IMAGE}
 
             # 환경 변수 설정 및 컨테이너 교체
-            export POLICY-COMPASS_IMAGE=${PREV_IMAGE}
+            export POLICY_COMPASS_IMAGE=${PREV_IMAGE}
             $DOCKER_COMPOSE up -d --force-recreate
 
             # 헬스체크 (retry 로직 추가)
             echo "⏳ 헬스체크 중..."
             MAX_RETRIES=12
             for i in $(seq 1 $MAX_RETRIES); do
-              HTTP_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" http://localhost:8000/api/v1/health/ 2>/dev/null || echo "000")
+              HTTP_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" http://localhost:8000/api/health 2>/dev/null || echo "000")
               if [ "$HTTP_STATUS" -eq 200 ]; then
                 echo "✅ 롤백 성공!"
                 echo "${PREV_IMAGE}" > .current_image

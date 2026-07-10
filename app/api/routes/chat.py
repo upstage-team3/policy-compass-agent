@@ -47,6 +47,9 @@ async def chat(payload: ChatRequest) -> ChatTurnResponse:
 @router.post("/stream")
 async def chat_stream(payload: ChatRequest) -> StreamingResponse:
     async def event_generator():
+        status_event = {"type": "status", "message": "조건을 확인하고 추천 후보를 찾고 있어요."}
+        yield f"event: status\ndata: {json.dumps(status_event, ensure_ascii=False)}\n\n"
+
         try:
             result = await _run_agent(payload)
         except Exception:  # noqa: BLE001 - 스트림 중 에러도 SSE로 전달
@@ -59,6 +62,14 @@ async def chat_stream(payload: ChatRequest) -> StreamingResponse:
             return
 
         reply = result.get("final_response", "")
+        if not reply:
+            error_event = {
+                "type": "error",
+                "message": "답변을 만들지 못했어요. 조건을 조금 더 구체적으로 입력해 다시 시도해주세요.",
+            }
+            yield f"event: error\ndata: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+            return
+
         for i in range(0, len(reply), _STREAM_CHUNK_SIZE):
             chunk = {"type": "token", "content": reply[i : i + _STREAM_CHUNK_SIZE]}
             yield f"event: token\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
