@@ -31,9 +31,7 @@ def deadline_status(apply_end: str | None, *, today: date | None = None) -> str:
     return "모집중"
 
 
-def score_policy(
-    profile: dict[str, Any], policy: dict[str, Any], *, today: date | None = None
-) -> dict[str, Any]:
+def score_policy(profile: dict[str, Any], policy: dict[str, Any], *, today: date | None = None) -> dict[str, Any]:
     """사용자 조건(profile)과 정책(policy)의 적합도를 0.0~1.0 사이 점수로 계산한다."""
 
     score = 0.0
@@ -96,11 +94,7 @@ def score_policy(
 
     interest_fields = set(profile.get("interest_fields") or [])
     if interest_fields:
-        haystack = (
-            f"{policy.get('category', '')} "
-            f"{policy.get('support_content', '')} "
-            f"{policy.get('title', '')}"
-        )
+        haystack = f"{policy.get('category', '')} {policy.get('support_content', '')} {policy.get('title', '')}"
         if any(field in haystack for field in interest_fields):
             score += 0.15
             reasons.append("관심 분야와 관련된 사업이에요.")
@@ -114,10 +108,7 @@ def score_policy(
 
     score = max(0.0, min(1.0, round(score, 2)))
     if not reasons:
-        reasons.append(
-            "입력하신 조건과 대략적으로 관련이 있는 사업이에요. "
-            "상세 조건은 공고문에서 확인해주세요."
-        )
+        reasons.append("입력하신 조건과 대략적으로 관련이 있는 사업이에요. 상세 조건은 공고문에서 확인해주세요.")
 
     return {
         "policy": policy,

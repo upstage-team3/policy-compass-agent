@@ -8,12 +8,10 @@ from pydantic import BaseModel, Field
 
 class UserProfile(BaseModel):
     age: int | None = None
-    employment_status: (
-        Literal["unemployed_seeking_job", "employed", "student", "not_specified"] | None
-    ) = None
-    graduation_status: (
-        Literal["enrolled", "expected_graduate", "graduated_within_2y", "graduated_over_2y"] | None
-    ) = None
+    employment_status: Literal["unemployed_seeking_job", "employed", "student", "not_specified"] | None = None
+    graduation_status: Literal["enrolled", "expected_graduate", "graduated_within_2y", "graduated_over_2y"] | None = (
+        None
+    )
     region: str | None = None
     is_entrepreneur: bool | None = None
     has_registered_business: bool | None = None

@@ -119,7 +119,8 @@
 
     async function send(message) {
       addBubble("user", message);
-      const botBubble = addBubble("bot", "");
+      const botBubble = addBubble("bot", "답변을 준비하고 있어요.");
+      let hasToken = false;
       sendBtn.disabled = true;
 
       try {
@@ -128,6 +129,9 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ session_id: sessionId, message }),
         });
+        if (!res.ok || !res.body) {
+          throw new Error("stream unavailable");
+        }
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -144,8 +148,14 @@
             if (!dataLine) continue;
             const payload = JSON.parse(dataLine.slice(5).trim());
             if (payload.type === "token") {
+              if (!hasToken) {
+                botBubble.textContent = "";
+                hasToken = true;
+              }
               botBubble.textContent += payload.content;
               log.scrollTop = log.scrollHeight;
+            } else if (payload.type === "status") {
+              if (!hasToken) botBubble.textContent = payload.message;
             } else if (payload.type === "error") {
               botBubble.textContent = payload.message;
             }

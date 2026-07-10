@@ -59,9 +59,7 @@ class SolarLLMClient:
             data = response.json()
             return data["choices"][0]["message"]["content"]
 
-    async def stream_complete(
-        self, messages: list[dict[str, str]], *, temperature: float = 0.3
-    ) -> AsyncIterator[str]:
+    async def stream_complete(self, messages: list[dict[str, str]], *, temperature: float = 0.3) -> AsyncIterator[str]:
         if not self.is_configured:
             raise LLMUnavailableError("UPSTAGE_API_KEY 가 설정되지 않았습니다.")
 
@@ -74,9 +72,10 @@ class SolarLLMClient:
         headers = {"Authorization": f"Bearer {self._settings.upstage_api_key}"}
         url = f"{self._settings.upstage_base_url}/chat/completions"
 
-        async with httpx.AsyncClient(timeout=60) as client, client.stream(
-            "POST", url, json=payload, headers=headers
-        ) as response:
+        async with (
+            httpx.AsyncClient(timeout=60) as client,
+            client.stream("POST", url, json=payload, headers=headers) as response,
+        ):
             response.raise_for_status()
             async for line in response.aiter_lines():
                 if not line or not line.startswith("data:"):

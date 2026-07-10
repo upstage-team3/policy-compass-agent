@@ -4,6 +4,7 @@ from datetime import date
 
 from app.graph import nodes
 from app.graph.scoring import deadline_status, score_policy
+from app.repositories.policy import _normalize_bizinfo_item, _normalize_bizinfo_items
 
 
 def test_heuristic_route_recommend():
@@ -67,11 +68,7 @@ def test_score_policy_region_match_scores_higher_than_mismatch():
         "apply_end": None,
     }
     matching_profile = {"region": "서울", "age": 25, "employment_status": "unemployed_seeking_job"}
-    mismatched_profile = {
-        "region": "부산",
-        "age": 25,
-        "employment_status": "unemployed_seeking_job",
-    }
+    mismatched_profile = {"region": "부산", "age": 25, "employment_status": "unemployed_seeking_job"}
 
     match_score = score_policy(matching_profile, policy)["match_score"]
     mismatch_score = score_policy(mismatched_profile, policy)["match_score"]
@@ -112,9 +109,32 @@ async def test_guardrail_node_softens_absolute_language_and_adds_disclaimer():
     }
     result = await nodes.guardrail_node(state)
 
-    assert (
-        "반드시" not in result["final_response"]
-        or "신청 가능성이 높아요" in result["final_response"]
-    )
+    assert "반드시" not in result["final_response"] or "신청 가능성이 높아요" in result["final_response"]
     assert "확인해주세요" in result["final_response"]
     assert result["guardrail_notes"]
+
+
+def test_normalize_bizinfo_item_handles_empty_optional_fields():
+    item = {
+        "pblancId": "BIZ-1",
+        "pblancNm": "AI 창업 지원사업",
+        "reqstBeginEndDe": "20260701 ~ 20260731",
+        "pldirSportRealmLclasCodeNm": "창업",
+        "hashTags": "서울,AI",
+    }
+
+    normalized = _normalize_bizinfo_item(item)
+
+    assert normalized["id"] == "BIZ-1"
+    assert normalized["category"] == "창업"
+    assert normalized["region"] == ["서울"]
+    assert normalized["apply_start"] == "2026-07-01"
+    assert normalized["apply_end"] == "2026-07-31"
+    assert "확인이 필요" in normalized["target_description"]
+    assert normalized["source_url"] == "https://www.bizinfo.go.kr/"
+
+
+def test_normalize_bizinfo_items_accepts_nested_items_shape():
+    payload = {"response": {"body": {"items": {"item": {"pblancId": "BIZ-1"}}}}}
+
+    assert _normalize_bizinfo_items(payload) == [{"pblancId": "BIZ-1"}]
