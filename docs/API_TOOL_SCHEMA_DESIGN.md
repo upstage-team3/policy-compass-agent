@@ -13,7 +13,7 @@
 | --- | --- | --- | --- | --- |
 | 1 | 고용24 국민내일배움카드 훈련과정 API | `EMPLOYMENT24_TRAINING_API_KEY`, `EMPLOYMENT24_TRAINING_API_URL` | 키 설정, 연결 가능 | 직무별 교육/훈련과정 추천 |
 | 2 | 고용24 채용정보 API | `EMPLOYMENT24_JOB_API_KEY`, `EMPLOYMENT24_JOB_API_URL` | 키 설정, 개인키 제한 있음 | 채용행사/공채속보/공채기업정보 제공, 직접 공고는 탐색 가이드 |
-| 3 | 온통청년 청년정책 API | `YOUTHCENTER_POLICY_API_KEY`, `YOUTHCENTER_POLICY_API_URL` | 키 미설정 | 청년 취업정책, 지원금, 일경험, 상담, 공간 정보의 mock/스키마 준비 |
+| 3 | 온통청년 청년정책 API | `YOUTHCENTER_POLICY_API_KEY`, `YOUTHCENTER_POLICY_API_URL` | 키 미설정 | 청년 취업정책, 지원금, 일경험, 상담, 공간 정보 스키마 준비. 키가 없으면 빈 결과 |
 
 기업마당 API는 오늘 핵심 MVP에서 제외하고, 창업/사업자 질문이 들어올 때만 보조 데이터로 사용한다.
 

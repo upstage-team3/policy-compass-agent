@@ -33,7 +33,7 @@ FastAPI 단일 서버 (:8000)
 
 ## Day2: 2026-07-09
 
-목표: Mock 기반 Agent MVP 구현 및 팀원 구조 통합
+목표: 실연동 중심 Agent MVP 구현 및 팀원 구조 통합
 
 완료한 작업:
 
@@ -43,11 +43,11 @@ FastAPI 단일 서버 (:8000)
 - LangGraph Agent 기본 흐름 구현
 - 사용자 조건 추출 Node 구현
 - 부족 조건 질문 흐름 구현
-- Mock 정책 데이터 작성
+- 고용24 훈련과정 실데이터 연동
 - 추천 점수화 로직 구현
 - 상담형 응답 생성 구현
 - 기업마당 API 인증키 기반 호출 구조 추가
-- API 실패 시 Mock fallback 구현
+- API 실패 시 빈 결과 또는 명시적 안내 fallback 구현
 - 정적 채팅 UI 제공
 - 정책 목록/상세/검색 API 추가
 - SSE 스트리밍 API 추가
@@ -171,14 +171,14 @@ FastAPI 단일 서버 (:8000)
 
 ## DB 기반 고도화 계획
 
-현재 프로젝트는 기업마당 Open API 또는 `data/mock_policies.json`을 통해 정책 데이터를 가져오고, LangGraph Agent가 조건 추출 -> 누락 조건 확인 -> 정책 검색 -> 자격 점수화 -> 답변 생성을 수행하는 MVP 구조다. 다음 구현 단계에서는 온통청년 API와 고용24 훈련과정 API를 핵심 데이터 소스로 추가하고, 고용24 채용정보 API는 보조/fallback 대상으로 둔다.
+현재 프로젝트는 기업마당 Open API와 고용24 훈련과정 API를 통해 데이터를 가져오고, LangGraph Agent가 조건 추출 -> 누락 조건 확인 -> 정책/훈련 검색 -> 자격 점수화 -> 답변 생성을 수행하는 MVP 구조다. 배포/연동 테스트 기준으로 데모용 대체 정책 데이터 fallback은 제거했으며, 다음 구현 단계에서는 온통청년 API와 고용24 훈련과정 API를 핵심 데이터 소스로 강화하고 고용24 채용정보 API는 보조/fallback 대상으로 둔다.
 
 평가 기준과 서비스 완성도를 고려하면 다음 단계에서는 외부 API를 실시간으로 직접 조회하는 방식보다, 외부 정책 데이터를 내부 표준 스키마로 정규화해 DB에 저장하고 Agent가 DB를 조회하는 구조가 더 적합하다.
 
 권장 목표 구조:
 
 ```text
-온통청년 API / 고용24 훈련과정 API / 고용24 채용행사·공채속보·공채기업정보 API(보조) / 기업마당 API / mock API 응답 / 정책 문서
+온통청년 API / 고용24 훈련과정 API / 고용24 채용행사·공채속보·공채기업정보 API(보조) / 기업마당 API / 샘플 API 응답 fixture / 정책 문서
 -> Ingestion Service
 -> 정규화 및 검증
 -> DB 저장
@@ -204,7 +204,7 @@ MVP 고도화 단계에서는 PostgreSQL 또는 Supabase를 기준으로 다음 
 
 ### 계층 분리 방향
 
-현재 구조는 FastAPI 라우트, LangGraph 노드, Tool, Repository가 분리되어 있지만, `PolicyRepository`가 외부 API 호출, mock fallback, 정규화, 데이터 조회 역할을 함께 가지고 있다.
+현재 구조는 FastAPI 라우트, LangGraph 노드, Tool, Repository가 분리되어 있지만, `PolicyRepository`가 외부 API 호출, 정규화, 데이터 조회 역할을 함께 가지고 있다.
 
 다음 단계에서는 역할을 더 명확히 나눈다.
 
@@ -220,7 +220,7 @@ MVP 고도화 단계에서는 PostgreSQL 또는 Supabase를 기준으로 다음 
 - `app/services/policy_search.py`
 - `app/repositories/policy_db.py`
 - `app/repositories/chat_session.py`
-- `data/mock_bizinfo_api_response.json`
+- `data/sample_bizinfo_api_response.json`
 - `data/scripts/seed_policies.py`
 
 ### Tool Schema 및 누락 조건 질문
@@ -242,14 +242,14 @@ Tool Schema는 Agent가 도구를 호출할 때 사용하는 입력 계약이다
 
 최소 추천 조건은 `region`, `age`, `employment_status`, `is_entrepreneur`로 두고, 사업자 등록 여부나 관심 분야는 추천 품질을 높이는 선택 조건으로 처리한다. 단, 창업/소상공인 정책을 추천할 때는 `has_registered_business` 또는 `business_stage`가 부족하면 추가 질문을 우선한다.
 
-### Mock 데이터와 실제 API 호환성
+### 실제 API와 저장 데이터 호환성
 
-실연동 전환 시 깨지지 않도록 mock 데이터도 실제 API 응답과 내부 표준 데이터로 분리한다.
+실연동 전환 시 깨지지 않도록 실제 API 응답과 내부 표준 데이터를 분리한다.
 
-- `mock_bizinfo_api_response.json`: 기업마당 API 응답 형태를 흉내낸 원본 mock
-- `mock_policies.json`: 내부 표준 정책 스키마에 맞춘 정규화 mock
+- `sample_bizinfo_api_response.json`: 기업마당 API 응답 형태를 보존한 샘플 fixture
+- 저장 데이터: 내부 표준 정책/훈련 스키마에 맞춘 정규화 결과
 
-API 응답과 mock API 응답은 같은 normalizer를 거쳐 DB에 저장되도록 한다.
+실제 API 응답과 샘플 API 응답은 같은 normalizer를 거쳐 DB에 저장되도록 한다.
 
 ### Upstage Document Parse / Information Extract 확장
 

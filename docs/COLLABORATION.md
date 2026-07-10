@@ -4,7 +4,7 @@
 
 이 문서는 정책나침반 팀원이 같은 코드 구조를 기준으로 작업하고, 충돌 없이 개발·문서화·배포를 이어가기 위한 협업 기준이다.
 
-현재 기준 구조는 팀원이 공유한 `policy-compass-agent` 폴더 구조를 기반으로 하며, 기존 로컬 작업 내용 중 Mock 데이터, 기업마당 API 정규화, 8000 포트 실행, 문서 내용을 통합했다.
+현재 기준 구조는 팀원이 공유한 `policy-compass-agent` 폴더 구조를 기반으로 하며, 기존 로컬 작업 내용 중 기업마당 API 정규화, 고용24 훈련과정 실연동, 8000 포트 실행, 문서 내용을 통합했다. 배포/연동 테스트 기준으로 데모용 대체 정책 데이터 fallback은 제거했다.
 
 ## 매일 공유할 내용
 
@@ -32,7 +32,7 @@
 | 역할 | 담당 범위 | 우선 담당 |
 | --- | --- | --- |
 | Agent / LLM | LangGraph 노드, Router/Profile/Response 프롬프트, LLM fallback, 가드레일 | Agent 담당 |
-| Data / API | 기업마당 API, Mock 정책 데이터, 정책 스키마, RAG-lite 검색 | Data 담당 |
+| Data / API | 기업마당 API, 고용24 훈련과정 API, 정책 스키마, RAG-lite 검색 | Data 담당 |
 | Backend / UI | FastAPI 라우트, 정적 UI, SSE 스트리밍, API 응답 구조 | Backend 담당 |
 | Infra / Docs | Docker, GCP, README, 개발 문서, GitHub Actions | Infra/Docs 담당 |
 | 공통 | 데모 시나리오, 발표자료, 회고, 최종 QA | 둘 다 |
@@ -49,7 +49,7 @@
 | `app/core/` | 환경 설정, LLM 클라이언트, 프롬프트 |
 | `app/schemas/` | 채팅/정책 Pydantic 모델 |
 | `app/static/index.html` | 데모 채팅 UI |
-| `data/mock_policies.json` | 데모 정책 데이터 |
+| `data/supabase_schema.sql` | 향후 DB/RAG 확장 스키마 |
 | `docs/` | 개발 현황, 로드맵, 배포 메모, 협업 문서 |
 | `tests/` | Agent/API 테스트 |
 
@@ -104,7 +104,6 @@ BIZINFO_API_KEY=
 BIZINFO_API_URL=https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do
 SERVICE_NAME=policy-compass
 APP_ENV=local
-USE_MOCK_POLICY_DATA=false
 CORS_ORIGINS=["*"]
 ```
 
@@ -134,7 +133,7 @@ uv run python -m pytest
 ## 파일 충돌 방지 규칙
 
 - `app/graph/nodes.py`, `app/core/prompts.py`, `app/core/llm.py`는 Agent/LLM 담당자가 우선 수정한다.
-- `app/repositories/policy.py`, `app/repositories/rag.py`, `data/mock_policies.json`는 Data/API 담당자가 우선 수정한다.
+- `app/repositories/policy.py`, `app/repositories/rag.py`, `app/repositories/work24_training.py`는 Data/API 담당자가 우선 수정한다.
 - `app/api/routes/`, `app/static/index.html`, `app/main.py`는 Backend/UI 담당자가 우선 수정한다.
 - `Dockerfile`, `docker-compose.yml`, `.env.example`, `.github/workflows/`는 Infra 담당자가 우선 수정한다.
 - 같은 파일을 동시에 고쳐야 하면 먼저 팀 채팅에 남긴다.

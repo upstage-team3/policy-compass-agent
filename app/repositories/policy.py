@@ -49,17 +49,14 @@ class PolicyRepository:
     """정책 공고 데이터 접근 계층.
 
     기업마당 Open API 연동을 시도하고 실제 응답을 PolicyItem 스키마로
-    정규화한다. 배포/연동 테스트에서는 mock 정책 데이터로 폴백하지 않으며,
-    API 키가 없거나 호출이 실패하면 빈 결과를 반환한다.
+    정규화한다. API 키가 없거나 호출이 실패하면 빈 결과를 반환한다.
     """
 
     def __init__(self) -> None:
         self._settings = get_settings()
 
     async def _fetch_remote(self) -> list[dict[str, Any]] | None:
-        if self._settings.use_mock_policy_data or not self._settings.bizinfo_api_key:
-            if self._settings.use_mock_policy_data:
-                logger.warning("USE_MOCK_POLICY_DATA is ignored in integration mode.")
+        if not self._settings.bizinfo_api_key:
             return None
         try:
             async with httpx.AsyncClient(timeout=10) as client:

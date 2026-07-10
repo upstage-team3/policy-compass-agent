@@ -57,14 +57,12 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("EMPLOYMENT24_JOB_API_URL", "EMPLOYMENT24_API_URL"),
     )
 
-    # 기업마당 Open API - 배포/연동 테스트에서는 mock 데이터 fallback을 사용하지 않음
+    # 기업마당 Open API - API 키가 없거나 호출에 실패하면 빈 결과 반환
     bizinfo_api_key: str | None = None
     bizinfo_base_url: str = Field(
         default="https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do",
         validation_alias=AliasChoices("BIZINFO_BASE_URL", "BIZINFO_API_URL"),
     )
-    use_mock_policy_data: bool = False
-
     data_dir: Path = BASE_DIR / "data"
 
 

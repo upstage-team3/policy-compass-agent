@@ -51,10 +51,10 @@ curl -X POST http://localhost:8000/api/chat \
 | --- | --- | --- | --- |
 | 1 | 고용24 국민내일배움카드 훈련과정 API | 취업 준비에 필요한 교육/훈련과정 조회 | 키 설정, 연결 가능 |
 | 2 | 고용24 채용정보 API | 채용행사, 공채속보, 공채기업정보 또는 채용 탐색 가이드 | 키 설정, 개인키 제한 있음 |
-| 3 | 온통청년 Open API | 청년 취업정책, 청년공간, 청년콘텐츠 조회 | 키 미설정, mock/스키마 우선 |
+| 3 | 온통청년 Open API | 청년 취업정책, 청년공간, 청년콘텐츠 조회 | 키 미설정 시 빈 결과 |
 | 4 | 기업마당 지원사업정보 API | 창업/사업자/중소기업 지원사업 보조 조회 | 키 설정, MVP 핵심에서 제외 |
 
-취업 MVP에서는 고용24 국민내일배움카드 훈련과정을 우선 실데이터로 연결하고, 온통청년은 키 발급 전까지 내부 mock/정규화 스키마로 준비한다.
+취업 MVP에서는 고용24 국민내일배움카드 훈련과정을 우선 실데이터로 연결하고, 온통청년은 키 발급 전까지 내부 대체 데이터로 보완하지 않고 빈 결과로 처리한다. 정규화 스키마와 normalizer만 유지한다.
 고용24 채용정보 API는 개인 신청 키에서 채용행사, 공채속보, 공채기업정보만 사용할 수 있다.
 채용정보목록과 채용정보상세 API는 개인회원 키로 사용할 수 없으므로,
 직접 공고 조회가 필요할 때는 채용 탐색 가이드로 폴백한다.
@@ -66,7 +66,7 @@ Day3 revised 구현 상태:
 - `YouthPolicySearchInput`, `TrainingCourseSearchInput`, `RecruitmentInfoSearchInput` 스키마 추가
 - 고용24 훈련과정 XML normalizer와 탐색 fallback 추가
 - 고용24 채용정보 개인회원 권한 제한 감지 및 채용 탐색 가이드 fallback 추가
-- 온통청년 키 미설정 시 내부 정책 데이터 fallback 추가
+- 온통청년 키 미설정 시 빈 결과 반환
 - 검증 기준: `uv run python -m pytest` 37개 통과
 
 ## 온통청년 Open API
@@ -194,7 +194,7 @@ pageIndex
 | 07 | 경영 |
 | 09 | 기타 |
 
-현재 코드는 기업마당 API 호출 결과를 `PolicyItem` 스키마로 1차 정규화한다. 호출 실패, 키 누락, 응답 필드 부족 시 `data/mock_policies.json`로 fallback한다.
+현재 코드는 기업마당 API 호출 결과를 `PolicyItem` 스키마로 1차 정규화한다. 호출 실패, 키 누락, 응답 필드 부족 시 대체 정책 데이터로 보완하지 않고 빈 결과를 반환한다.
 취업 MVP에서는 기업마당을 핵심 데이터로 두지 않고, 창업/사업자 관련 질문에 대응하는 보조 데이터로 유지한다.
 
 ## 환경변수
@@ -213,7 +213,6 @@ BIZINFO_API_KEY=
 BIZINFO_API_URL=https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do
 SERVICE_NAME=policy-compass
 APP_ENV=local
-USE_MOCK_POLICY_DATA=false
 CORS_ORIGINS=["*"]
 ```
 
@@ -221,7 +220,7 @@ CORS_ORIGINS=["*"]
 
 - 실제 API 키를 문서, README, GitHub에 올리지 않는다.
 - `.env`를 새 파일로 덮어쓰지 않는다.
-- 배포/연동 테스트 기준으로 mock 정책 데이터 fallback은 사용하지 않는다.
+- 배포/연동 테스트 기준으로 데모용 대체 정책 데이터 fallback은 사용하지 않는다.
 - 실제 온통청년/고용24/기업마당 API를 확인하려면 VM/로컬 `.env`에
   해당 API 키를 넣는다.
 
@@ -304,7 +303,7 @@ Nginx 구성 방향:
 - [ ] `/health`와 `/api/health`가 정상 응답하는가?
 - [ ] `/` UI가 정상 표시되는가?
 - [ ] `/api/chat`이 정상 응답하는가?
-- [ ] 기업마당 API 실패 시 Mock fallback이 되는가?
+- [ ] 기업마당 API 실패 시 대체 데이터로 보완하지 않고 빈 결과/안내 흐름으로 처리되는가?
 - [ ] 온통청년 API 신청 상태와 키 발급 여부를 확인했는가?
 - [ ] 고용24 채용정보 API 개인키 조회 제한에 대한 fallback이 준비되어 있는가?
 - [ ] 추천 응답에 원문 링크가 포함되는가?

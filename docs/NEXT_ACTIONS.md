@@ -4,8 +4,8 @@
 
 - [x] 팀원 폴더 구조 기반으로 현재 프로젝트 통합
 - [x] 8000 포트 단일 서버 기준으로 실행 방식 정리
-- [x] 배포/연동 테스트 기준으로 `data/mock_policies.json` 제거
-- [x] 기업마당 API 실패/키 없음 시 mock 대신 빈 결과 반환
+- [x] 배포/연동 테스트 기준으로 데모용 정책 JSON 제거
+- [x] 기업마당 API 실패/키 없음 시 대체 데이터 대신 빈 결과 반환
 - [x] `/health`, `/api/v1/chat/sync` 기존 호환 라우트 유지
 - [x] `uv lock`, `uv sync` 갱신
 - [x] `uv run python -m pytest` 통과
@@ -74,7 +74,7 @@
 
 - [x] 추천 응답에 정책명, 추천 이유, 확인 필요 조건, 신청 방법, 원문 링크가 나온다.
 - [x] 조건이 부족하면 바로 정책을 나열하지 않고 추가 질문을 한다.
-- [x] 기업마당 API가 실패해도 Mock 데이터로 대체하지 않고 빈 결과로 처리한다.
+- [x] 기업마당 API가 실패해도 대체 데이터로 보완하지 않고 빈 결과로 처리한다.
 - [x] 답변에서 최종 자격 판정을 하지 않는다.
 - [x] 테스트 37개가 통과한다.
 - [x] 온통청년 API 키 신청이 완료된다.
@@ -95,7 +95,7 @@
 - 로컬 서버 기준 `/health`, `/`, `/docs`, `/api/chat/stream` 응답을 확인했다.
 - 고용24 훈련과정 normalizer, 채용정보 권한 제한 fallback, 온통청년 키 미설정 fallback을 추가했다.
 - 테스트 기준은 `uv run python -m pytest` 37개 통과다.
-- 배포/연동 테스트 기준으로 mock 정책 파일 fallback을 제거했다.
+- 배포/연동 테스트 기준으로 데모용 대체 정책 파일 fallback을 제거했다.
 - “국비지원 훈련을 받으면 뭐가 좋아?” 같은 설명형 질문은 훈련과정 검색이 아니라 LLM 설명 응답으로 처리한다.
 - 고용24 훈련과정 검색은 사용자 문장에서 `데이터 분석` 같은 핵심 직무 키워드를 우선 추출하고, 결과에 상세 과정 URL을 포함한다.
 
@@ -113,15 +113,15 @@
 
 ### 2. 데이터 수집 및 Seed
 
-- [ ] `data/mock_youthcenter_api_response.xml`을 추가해 온통청년 API 응답 형태의 mock을 만든다.
-- [ ] `data/mock_recruitment_infos.json`을 추가해 채용행사/공채속보/공채기업정보 응답과 채용정보목록/상세 제한 응답 mock을 함께 만든다.
-- [ ] `data/mock_bizinfo_api_response.json`을 추가해 실제 기업마당 API 응답 형태의 mock을 만든다.
-- [ ] API 응답과 mock API 응답이 같은 normalizer를 거치도록 정리한다.
-- [ ] `data/scripts/seed_policies.py`를 추가해 mock 정책 데이터를 DB에 적재한다.
+- [ ] `data/sample_youthcenter_api_response.xml`을 추가해 온통청년 API 응답 형태의 샘플 fixture를 만든다.
+- [ ] `data/sample_recruitment_infos.json`을 추가해 채용행사/공채속보/공채기업정보 응답과 채용정보목록/상세 제한 응답 샘플을 함께 만든다.
+- [ ] `data/sample_bizinfo_api_response.json`을 추가해 실제 기업마당 API 응답 형태의 샘플 fixture를 만든다.
+- [ ] 실제 API 응답과 샘플 API 응답이 같은 normalizer를 거치도록 정리한다.
+- [ ] `data/scripts/seed_policies.py`를 추가해 정규화된 샘플 정책 데이터를 DB에 적재한다.
 - [ ] 온통청년 API 호출 결과를 DB에 upsert하는 `PolicyIngestionService`를 추가한다.
 - [ ] 고용24 채용행사/공채속보/공채기업정보 호출 결과를 DB에 upsert하고 권한 제한 응답은 fallback reason으로 기록하는 `RecruitmentInfoIngestionService`를 추가한다.
 - [ ] 기업마당 API 호출 결과는 창업/사업자 보조 데이터로 DB에 upsert한다.
-- [ ] API 호출 실패 시 기존 mock fallback이 아니라, 마지막으로 저장된 DB 데이터를 우선 사용하도록 전환한다.
+- [ ] API 호출 실패 시 데모용 대체 데이터가 아니라, 마지막으로 저장된 DB 데이터를 우선 사용하도록 전환한다.
 
 ### 3. 계층 분리
 

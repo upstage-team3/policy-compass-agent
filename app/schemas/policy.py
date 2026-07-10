@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class PolicyItem(BaseModel):
-    """정책/지원사업 데이터 모델 (기업마당 API 응답 또는 mock 데이터를 정규화한 형태)."""
+    """정책/지원사업 데이터 모델 (외부 API 응답을 정규화한 형태)."""
 
     id: str
     title: str
