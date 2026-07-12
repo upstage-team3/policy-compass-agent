@@ -308,3 +308,61 @@ Nginx 구성 방향:
 - [ ] 고용24 채용정보 API 개인키 조회 제한에 대한 fallback이 준비되어 있는가?
 - [ ] 추천 응답에 원문 링크가 포함되는가?
 - [ ] 신청 가능 여부를 확정적으로 말하지 않는가?
+
+## CI/CD 완료 기록 - 2026-07-10
+
+GitHub Actions 기반 CI/CD 흐름을 실제 PR merge와 배포까지 검증했다.
+
+동작 흐름:
+
+1. feature 브랜치에서 PR 생성
+2. PR에서 `Code Quality`, `Unit Tests` 실행
+3. CI 통과 후 사용자가 PR merge
+4. `main` 브랜치에서 CI 재실행
+5. `main` CI 성공 시 CD 워크플로우 자동 실행
+6. Docker 이미지를 GHCR에 build/push
+7. GitHub Actions가 GCE VM에 SSH 접속
+8. VM에서 이미지를 pull하고 Docker Compose로 컨테이너 재시작
+9. `/api/health` 헬스체크 성공 시 배포 완료
+
+확인된 사항:
+
+- PR CI 통과 확인
+- PR merge 후 `main` CI와 CD 자동 실행 확인
+- GHCR 이미지 build/push 성공 확인
+- GCE VM SSH 접속 성공 확인
+- GCE VM에 Docker 및 Docker Compose plugin 설치 후 배포 성공 확인
+
+CD 재실행 방법:
+
+1. GitHub 저장소의 `Actions` 탭으로 이동
+2. 실패한 `Policy Compass Agent CD` run 선택
+3. `Re-run failed jobs` 클릭
+
+배포 서버 필수 조건:
+
+- VM에 Docker 설치
+- Docker Compose plugin 설치
+- `GCE_USERNAME` 사용자가 `docker` 명령을 실행할 수 있어야 함
+- GitHub Actions Secrets에 다음 값 등록
+  - `GCE_HOST`
+  - `GCE_USERNAME`
+  - `GCE_SSH_KEY`
+  - `UPSTAGE_API_KEY`
+  - `SUPABASE_URL`
+  - `SUPABASE_KEY`
+
+배포 확인 방법:
+
+```text
+http://VM_EXTERNAL_IP:8000/
+http://VM_EXTERNAL_IP:8000/api/health
+```
+
+서버 내부 확인:
+
+```bash
+curl http://localhost:8000/api/health
+docker ps
+docker logs --tail=100 policy-compass-agent
+```
