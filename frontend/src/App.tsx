@@ -83,13 +83,13 @@ export default function App() {
     setIsTyping(true);
 
     const assistantId = generateId();
-    let assistantMsgStarted = false;
 
     const appendToken = (chunk: string) => {
       setChats((prev) =>
         prev.map((c) => {
           if (c.id !== activeChatId) return c;
-          if (!assistantMsgStarted) {
+          const exists = c.messages.some((m) => m.id === assistantId);
+          if (!exists) {
             const aiMsg: Message = {
               id: assistantId,
               role: "assistant",
@@ -106,7 +106,6 @@ export default function App() {
           };
         }),
       );
-      assistantMsgStarted = true;
       setIsTyping(false);
     };
 
