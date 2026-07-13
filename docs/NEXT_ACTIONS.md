@@ -8,6 +8,7 @@
 
 - [x] Upstage Solar Router와 통합 Conversation Node 실제 호출
 - [x] 온통청년 `getPlcy` JSON API와 `apiKeyNm` 인증, 정책 3건 정규화 확인
+- [x] 온통청년 정책명 0건 재검색과 `zipCd` 거주지역 필터 추가
 - [x] 고용24 훈련 Repository 단독 호출과 상세 URL 회귀 확인
 - [x] 고용24 채용은 허용 3개 endpoint만 호출하고 제한 endpoint를 호출하지 않음
 - [x] 기업마당 Repository 단독 호출과 실제 JSON 필드 확인
@@ -37,7 +38,7 @@
 
 - [ ] `git diff`에서 코드와 문서 변경 범위 확인
 - [ ] Ruff lint/format 통과
-- [x] pytest `53 passed` 유지
+- [x] pytest `57 passed` 유지
 - [ ] 기존 CI를 통해 변경분 검증
 - [ ] 기존 CD를 통해 Google Cloud에 변경분 반영
 - [ ] 외부 `/`, `/api/health`, `/docs` 확인

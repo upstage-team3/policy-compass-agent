@@ -127,7 +127,7 @@ def compose_scored_template(scored: list[dict]) -> str:
 def compose_youth_policy_response(items: list[dict]) -> str:
     lines = [
         "현재 조건을 기준으로 확인해볼 만한 청년지원사업을 정리했어요.",
-        "온통청년 키가 없거나 결과가 부족한 경우에는 내부 정책 데이터로 보완했어요.",
+        "온통청년 공식 API 조회 결과입니다.",
     ]
     for idx, item in enumerate(items[:3], start=1):
         lines.append("")

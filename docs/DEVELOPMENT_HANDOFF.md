@@ -27,7 +27,9 @@
 - 개인회원에 허용된 고용24 채용행사·공채속보·공채기업정보 연동
 - 온통청년·기업마당 실제 응답 형식 정규화
 - 외부 API 오류 로그에 URL·query string·인증키가 남지 않도록 보완
-- Ruff lint/format 통과, pytest `53 passed`
+- 온통청년 정책명 검색이 0건이면 핵심 주제어로 완화해 재검색
+- 온통청년 `zipCd` 행정코드를 사용해 사용자 거주지역과 맞는 정책만 필터링
+- Ruff lint/format 통과, pytest `57 passed`
 
 ## 현재 Agent 흐름
 
@@ -136,7 +138,7 @@ uv run ruff format app tests --check
 uv run pytest tests -q
 ```
 
-현재 기준 기대 결과는 `53 passed`다. 테스트는 `tests/conftest.py`에서 외부 키를 비워 네트워크 없이 재현 가능해야 한다.
+현재 기준 기대 결과는 `57 passed`다. 테스트는 `tests/conftest.py`에서 외부 키를 비워 네트워크 없이 재현 가능해야 한다.
 
 ## 핵심 수동 테스트
 

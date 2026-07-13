@@ -15,6 +15,43 @@ logger = logging.getLogger(__name__)
 
 # 설정값(.env의 YOUTHCENTER_POLICY_API_URL)이 없을 때를 위한 공식 문서 기준 기본 엔드포인트.
 OFFICIAL_YOUTH_POLICY_API_URL = "https://www.youthcenter.go.kr/go/ythip/getPlcy"
+_GENERIC_POLICY_QUERIES = {
+    "청년",
+    "청년 정책",
+    "청년정책",
+    "정책",
+    "정책 검색",
+    "정책 검색 요청",
+    "지원",
+    "지원 사업",
+    "지원사업",
+}
+_POLICY_TOPIC_ALIASES = (
+    (("거주지원", "주거지원", "주거비", "월세", "전세"), "주거"),
+    (("취업지원", "구직지원", "취업", "구직", "일경험"), "취업"),
+    (("창업지원", "창업"), "창업"),
+    (("교육지원", "직업훈련", "역량강화"), "교육"),
+    (("복지지원", "생활지원"), "복지"),
+)
+_REGION_PREFIXES = {
+    "서울": "11",
+    "부산": "26",
+    "대구": "27",
+    "인천": "28",
+    "광주": "29",
+    "대전": "30",
+    "울산": "31",
+    "세종": "36",
+    "경기": "41",
+    "충북": "43",
+    "충남": "44",
+    "전남": "46",
+    "경북": "47",
+    "경남": "48",
+    "제주": "50",
+    "강원": "51",
+    "전북": "52",
+}
 
 
 def _compact_text(value: str | None) -> str | None:
@@ -96,7 +133,7 @@ def normalize_youth_policy_json(payload: dict[str, Any]) -> list[YouthPolicyItem
                     "rgtrInstCdNm",
                     "rgtrHghrkInstCdNm",
                 ),
-                region=_first(values, "zipCd", "regionNm", "region"),
+                region=_region_label(_first(values, "zipCd", "regionNm", "region")),
                 target_summary=" / ".join(part for part in target_parts if part) or None,
                 support_summary=_first(values, "plcySprtCn", "plcyExplnCn", "support"),
                 application_period=_first(values, "aplyYmd", "rqutPrdCn", "applicationPeriod"),
@@ -118,6 +155,60 @@ def _age_summary(values: dict[str, str | None]) -> str | None:
     return None
 
 
+def _region_label(zip_codes: str | None) -> str | None:
+    if not zip_codes:
+        return None
+    matched = [
+        name
+        for name, prefix in _REGION_PREFIXES.items()
+        if any(code.startswith(prefix) for code in zip_codes.split(","))
+    ]
+    if len(matched) >= 15:
+        return "전국"
+    return ", ".join(matched) or zip_codes
+
+
+def _filter_youth_policies_by_region(
+    items: list[YouthPolicyItem],
+    region: str | None,
+) -> list[YouthPolicyItem]:
+    if not region:
+        return items
+    prefix = next((code for name, code in _REGION_PREFIXES.items() if name in region), None)
+    if not prefix:
+        return items
+    return [
+        item for item in items if any(code.startswith(prefix) for code in str(item.raw.get("zipCd") or "").split(","))
+    ]
+
+
+def _build_youth_search_terms(query: YouthPolicySearchInput) -> list[str | None]:
+    """Build progressively broader title searches for the current Youth Center API."""
+
+    terms: list[str] = []
+    recognized_topic = False
+    candidates = [query.keywords, *query.support_types, *query.interest_fields]
+
+    for candidate in candidates:
+        normalized = " ".join(candidate.split()).strip()
+        if not normalized:
+            continue
+        if normalized not in _GENERIC_POLICY_QUERIES and normalized not in terms:
+            terms.append(normalized[:50])
+
+        compact = re.sub(r"\s+", "", normalized)
+        for aliases, topic in _POLICY_TOPIC_ALIASES:
+            if any(alias in compact for alias in aliases):
+                recognized_topic = True
+                if topic not in terms:
+                    terms.append(topic)
+
+    if not recognized_topic and query.employment_status == "unemployed_seeking_job" and "취업" not in terms:
+        terms.append("취업")
+
+    return terms[:3] or [None]
+
+
 class YouthCenterRepository:
     """온통청년 청년정책 Open API 접근 계층."""
 
@@ -130,16 +221,11 @@ class YouthCenterRepository:
             logger.warning("YOUTHCENTER_POLICY_API_KEY is not configured; returning no youth policy results.")
             return []
 
-        search_terms = [query.keywords, *query.support_types, *query.interest_fields]
-        search_query = " ".join(term.strip() for term in search_terms if term and term.strip())
-        params = {
+        base_params = {
             "apiKeyNm": self._settings.youthcenter_policy_api_key,
             "pageNum": str(query.page),
-            "pageSize": str(query.page_size),
+            "pageSize": str(min(max(query.page_size * 20, 50), 100) if query.region else query.page_size),
         }
-        if search_query:
-            params["plcyNm"] = search_query
-
         api_url = self._settings.youthcenter_policy_api_url or OFFICIAL_YOUTH_POLICY_API_URL
         headers = {
             "User-Agent": (
@@ -150,10 +236,26 @@ class YouthCenterRepository:
             "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
         }
 
+        async with httpx.AsyncClient(timeout=10, follow_redirects=False, headers=headers) as client:
+            for search_term in _build_youth_search_terms(query):
+                params = dict(base_params)
+                if search_term:
+                    params["plcyNm"] = search_term
+                items = await self._fetch(client, api_url, params)
+                items = _filter_youth_policies_by_region(items, query.region)
+                if items:
+                    return items[: query.page_size]
+        return []
+
+    async def _fetch(
+        self,
+        client: httpx.AsyncClient,
+        api_url: str,
+        params: dict[str, str],
+    ) -> list[YouthPolicyItem]:
         try:
-            async with httpx.AsyncClient(timeout=10, follow_redirects=False, headers=headers) as client:
-                response = await client.get(api_url, params=params)
-                response.raise_for_status()
+            response = await client.get(api_url, params=params)
+            response.raise_for_status()
         except Exception as exc:  # noqa: BLE001
             log_external_api_error(logger, "온통청년 API", exc)
             return []

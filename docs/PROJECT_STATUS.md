@@ -20,12 +20,12 @@
 | 프로필 추출 | 1차 완료 | Solar 우선, 실패 시 규칙 기반 추출 |
 | Tool 선택 | 2차 완료 | LLM이 선택한 데이터 Tool 하나만 호출 |
 | 응답 생성 | 2차 완료 | grounded LLM composer와 템플릿 fallback 분리 |
-| 온통청년 | live 검증 완료 | `apiKeyNm`, `pageNum`, `pageSize`, `plcyNm` JSON API와 실제 3건 확인 |
+| 온통청년 | live 검증 완료 | JSON API, 0건 시 주제어 재검색, `zipCd` 지역 필터를 실제 검증 |
 | 고용24 훈련 | live 검증 완료 | 실데이터 3건과 상세 URL 확인 |
 | 고용24 채용 | live 검증 완료 | 허용된 채용행사·공채속보·공채기업정보 3종 확인 |
 | 기업마당 | live 검증 완료 | `jsonArray`·신청기간·해시태그 정규화 후 3건 확인 |
 | SSE | 1차 완료 | `status`, `token`, `done`, `error`; 유형별 status는 미완료 |
-| 테스트 | 통과 | Ruff 통과, pytest `53 passed` |
+| 테스트 | 통과 | Ruff 통과, pytest `57 passed` |
 
 ## Agent 아키텍처
 
@@ -82,7 +82,7 @@ Router LLM + RoutingDecision
 - [x] fallback 규칙 모듈 격리
 - [x] grounded 응답 컴포저 분리
 - [x] Tool 단일 선택
-- [x] Ruff와 pytest 53개 통과
+- [x] Ruff와 pytest 57개 통과
 - [x] Upstage, 온통청년, 고용24 훈련·허용 채용 3종, 기업마당 Repository live 검증
 - [ ] 외부 API 5종 Agent 전체 경로 QA
 - [ ] 질문 유형별 SSE 상태 문구

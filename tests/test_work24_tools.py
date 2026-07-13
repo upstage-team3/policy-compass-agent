@@ -17,8 +17,18 @@ from app.repositories.work24_training import (
     normalize_training_courses,
     training_fallback_guide,
 )
-from app.repositories.youthcenter import normalize_youth_policy_items, normalize_youth_policy_json
-from app.tools.schemas import RecruitmentInfoSearchInput, TrainingCourseSearchInput
+from app.repositories.youthcenter import (
+    _build_youth_search_terms,
+    _filter_youth_policies_by_region,
+    normalize_youth_policy_items,
+    normalize_youth_policy_json,
+)
+from app.tools.schemas import (
+    RecruitmentInfoSearchInput,
+    TrainingCourseSearchInput,
+    YouthPolicyItem,
+    YouthPolicySearchInput,
+)
 
 
 def test_default_training_period_uses_six_month_window():
@@ -236,6 +246,51 @@ def test_normalize_youth_policy_json_maps_current_api_shape():
     assert item.organization == "고용노동부"
     assert "만 19~34세" in (item.target_summary or "")
     assert item.detail_url == "https://example.com/apply"
+
+
+def test_youth_search_terms_relax_broad_employment_phrase():
+    terms = _build_youth_search_terms(
+        YouthPolicySearchInput(
+            keywords="청년 취업 지원",
+            employment_status="unemployed_seeking_job",
+        )
+    )
+
+    assert terms == ["청년 취업 지원", "취업"]
+
+
+def test_youth_search_terms_normalize_housing_request():
+    terms = _build_youth_search_terms(
+        YouthPolicySearchInput(
+            keywords="거주지원을 받고 싶은데 관련 정책있어?",
+            employment_status="unemployed_seeking_job",
+        )
+    )
+
+    assert terms == ["거주지원을 받고 싶은데 관련 정책있어?", "주거"]
+
+
+def test_youth_search_terms_use_profile_for_generic_request():
+    terms = _build_youth_search_terms(
+        YouthPolicySearchInput(
+            keywords="정책 검색 요청",
+            employment_status="unemployed_seeking_job",
+        )
+    )
+
+    assert terms == ["취업"]
+
+
+def test_youth_policy_region_filter_keeps_matching_and_nationwide_items():
+    items = [
+        YouthPolicyItem(policy_id="seoul", title="서울 정책", region="서울", raw={"zipCd": "11110"}),
+        YouthPolicyItem(policy_id="incheon", title="인천 정책", region="인천", raw={"zipCd": "28237"}),
+        YouthPolicyItem(policy_id="all", title="전국 정책", region="전국", raw={"zipCd": "11110,26110,28237"}),
+    ]
+
+    filtered = _filter_youth_policies_by_region(items, "서울")
+
+    assert [item.policy_id for item in filtered] == ["seoul", "all"]
 
 
 async def test_missing_slot_node_for_training_requires_job_and_region():
