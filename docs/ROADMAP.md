@@ -1,5 +1,7 @@
 # 개발 로드맵
 
+> 이 문서는 중장기 설계와 과거 계획을 보존한다. 현재 구현 상태와 바로 이어서 할 작업은 [DEVELOPMENT_HANDOFF.md](DEVELOPMENT_HANDOFF.md)와 [NEXT_ACTIONS.md](NEXT_ACTIONS.md)를 우선한다.
+
 ## 목표
 
 2026-07-16 최종 발표까지 정책나침반을 취업 대상 청년을 위한 배포 가능한 AI Agent 데모로 완성한다.
