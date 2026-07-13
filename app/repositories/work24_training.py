@@ -10,6 +10,7 @@ from urllib.parse import quote_plus
 import httpx
 
 from app.core.config import get_settings
+from app.core.http import log_external_api_error
 from app.tools.schemas import TrainingCourseItem, TrainingCourseSearchInput
 
 logger = logging.getLogger(__name__)
@@ -149,8 +150,8 @@ class Work24TrainingRepository:
             async with httpx.AsyncClient(timeout=15) as client:
                 response = await client.get(self._settings.employment24_training_api_url, params=params)
                 response.raise_for_status()
-        except Exception:  # noqa: BLE001
-            logger.warning("고용24 훈련과정 API 호출 실패", exc_info=True)
+        except Exception as exc:  # noqa: BLE001
+            log_external_api_error(logger, "고용24 훈련과정 API", exc)
             return [training_fallback_guide("고용24 훈련과정 API 호출 실패", query)]
 
         try:

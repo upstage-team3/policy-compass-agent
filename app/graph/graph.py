@@ -1,7 +1,7 @@
 """LangGraph StateGraph 조립.
 
-Router -> Profile Extractor -> Missing Slot -> (Policy Search -> Eligibility
-Scorer -> Response | Ask Clarification) -> Guardrail 순서로 흐른다.
+Router -> (Conversation | Profile Extractor -> Missing Slot -> Search ->
+Eligibility Scorer -> Response) -> Guardrail 순서로 흐른다.
 session_id 를 thread_id 로 사용하는 MemorySaver checkpointer를 통해 같은
 대화 안에서 프로필이 누적되도록 한다.
 """
@@ -26,9 +26,7 @@ def build_agent_graph():
     graph.add_node("search_policy", N.policy_search_node)
     graph.add_node("score_eligibility", N.eligibility_scorer_node)
     graph.add_node("compose_response", N.response_node)
-    graph.add_node("explain", N.explain_node)
-    graph.add_node("general", N.general_node)
-    graph.add_node("out_of_scope", N.out_of_scope_node)
+    graph.add_node("conversation", N.conversation_node)
     graph.add_node("guardrail", N.guardrail_node)
 
     graph.set_entry_point("route_intent")
@@ -38,9 +36,7 @@ def build_agent_graph():
         E.route_after_router,
         {
             "extract_profile": "extract_profile",
-            "explain": "explain",
-            "general": "general",
-            "out_of_scope": "out_of_scope",
+            "conversation": "conversation",
         },
     )
 
@@ -56,7 +52,7 @@ def build_agent_graph():
     graph.add_edge("search_policy", "score_eligibility")
     graph.add_edge("score_eligibility", "compose_response")
 
-    for terminal in ("ask_clarification", "compose_response", "explain", "general", "out_of_scope"):
+    for terminal in ("ask_clarification", "compose_response", "conversation"):
         graph.add_edge(terminal, "guardrail")
 
     graph.add_edge("guardrail", END)

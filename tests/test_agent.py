@@ -2,9 +2,21 @@ from __future__ import annotations
 
 from datetime import date
 
-from app.graph import nodes
+from app.graph import edges, nodes
 from app.graph.scoring import deadline_status, score_policy
 from app.repositories.policy import _normalize_bizinfo_item, _normalize_bizinfo_items
+
+
+class StubLLM:
+    is_configured = True
+
+    def __init__(self, *responses: str) -> None:
+        self.responses = list(responses)
+        self.calls: list[dict] = []
+
+    async def complete(self, messages, **kwargs):
+        self.calls.append({"messages": messages, "kwargs": kwargs})
+        return self.responses.pop(0)
 
 
 def test_heuristic_route_recommend():
@@ -21,6 +33,83 @@ def test_heuristic_route_out_of_scope():
 
 def test_heuristic_route_general():
     assert nodes._heuristic_route("안녕하세요") == "GENERAL"
+
+
+async def test_router_uses_llm_semantics_without_keyword_override(monkeypatch):
+    llm = StubLLM('{"action":"RESPOND","response_mode":"general","request_kind":"general","search_query":null}')
+    monkeypatch.setattr(nodes, "_llm", llm)
+
+    result = await nodes.router_node({"user_input": "요즘 개발 교육을 듣고 있어"})
+
+    assert result == {
+        "intent": "GENERAL",
+        "action": "RESPOND",
+        "response_mode": "general",
+        "request_kind": "general",
+        "search_query": None,
+        "routing_source": "llm",
+    }
+    assert llm.calls[0]["kwargs"]["response_format_json"] is True
+
+
+async def test_router_falls_back_to_heuristics_when_llm_returns_invalid_json(monkeypatch):
+    monkeypatch.setattr(nodes, "_llm", StubLLM("not-json"))
+
+    result = await nodes.router_node({"user_input": "서울 데이터 분석 국비과정 찾아줘"})
+
+    assert result["intent"] == "RECOMMEND"
+    assert result["action"] == "SEARCH"
+    assert result["response_mode"] == "recommend"
+    assert result["request_kind"] == "training"
+    assert result["routing_source"] == "heuristic"
+
+
+async def test_router_returns_validated_llm_search_query(monkeypatch):
+    llm = StubLLM(
+        '{"action":"SEARCH","response_mode":"recommend","request_kind":"training",'
+        '"search_query":"  클라우드   엔지니어  "}'
+    )
+    monkeypatch.setattr(nodes, "_llm", llm)
+
+    result = await nodes.router_node({"user_input": "서울에서 클라우드 쪽으로 배울 과정을 찾아줘"})
+
+    assert result["request_kind"] == "training"
+    assert result["search_query"] == "클라우드 엔지니어"
+
+
+async def test_conversation_node_uses_llm_for_general_response(monkeypatch):
+    llm = StubLLM("반가워요. 오늘 어떤 고민부터 이야기해볼까요?")
+    monkeypatch.setattr(nodes, "_llm", llm)
+
+    result = await nodes.conversation_node({"user_input": "안녕하세요", "response_mode": "general"})
+
+    assert result["final_response"] == "반가워요. 오늘 어떤 고민부터 이야기해볼까요?"
+    assert len(llm.calls) == 1
+
+
+async def test_router_sends_named_policy_explanation_to_search(monkeypatch):
+    llm = StubLLM(
+        '{"action":"SEARCH","response_mode":"explain","request_kind":"youth_policy","search_query":"청년도약계좌"}'
+    )
+    monkeypatch.setattr(nodes, "_llm", llm)
+
+    result = await nodes.router_node({"user_input": "청년도약계좌의 현재 조건을 설명해줘"})
+
+    assert result["intent"] == "EXPLAIN"
+    assert result["action"] == "SEARCH"
+    assert result["response_mode"] == "explain"
+    assert result["request_kind"] == "youth_policy"
+
+
+async def test_search_explanation_skips_recommendation_slots():
+    result = await nodes.missing_slot_node({"response_mode": "explain", "request_kind": "youth_policy", "profile": {}})
+
+    assert result["missing_slots"] == []
+
+
+def test_route_after_router_uses_action_only():
+    assert edges.route_after_router({"action": "RESPOND", "intent": "EXPLAIN"}) == "conversation"
+    assert edges.route_after_router({"action": "SEARCH", "intent": "GENERAL"}) == "extract_profile"
 
 
 def test_heuristic_extract_profile_job_seeking_youth():
@@ -52,6 +141,87 @@ async def test_missing_slot_node_no_missing_when_complete():
     state = {"profile": {"region": "서울", "employment_status": "unemployed_seeking_job"}}
     result = await nodes.missing_slot_node(state)
     assert result["missing_slots"] == []
+
+
+async def test_profile_extractor_preserves_llm_selected_request_kind(monkeypatch):
+    llm = StubLLM('{"region":"서울","desired_job":"데이터 분석"}')
+    monkeypatch.setattr(nodes, "_llm", llm)
+
+    result = await nodes.profile_extractor_node(
+        {
+            "user_input": "서울에서 데이터 분야 프로그램을 알아보고 있어",
+            "request_kind": "training",
+        }
+    )
+
+    assert result["request_kind"] == "training"
+    assert result["profile"]["request_kind"] == "training"
+
+
+async def test_business_request_calls_only_bizinfo_tool(monkeypatch):
+    calls = {"bizinfo": 0, "youth": 0}
+
+    class BizinfoTool:
+        async def execute(self, payload):  # noqa: ARG002
+            calls["bizinfo"] += 1
+            return []
+
+    class YouthTool:
+        async def execute(self, payload):  # noqa: ARG002
+            calls["youth"] += 1
+            return []
+
+    monkeypatch.setattr(nodes, "_search_tool", BizinfoTool())
+    monkeypatch.setattr(nodes, "_youth_policy_tool", YouthTool())
+
+    await nodes.policy_search_node(
+        {
+            "user_input": "서울 청년 창업 지원사업 찾아줘",
+            "request_kind": "business",
+            "profile": {"region": "서울", "is_entrepreneur": True},
+        }
+    )
+
+    assert calls == {"bizinfo": 1, "youth": 0}
+
+
+async def test_training_tool_prefers_llm_planned_search_query(monkeypatch):
+    captured = {}
+
+    class TrainingTool:
+        async def execute(self, payload):
+            captured["desired_job"] = payload.desired_job
+            captured["keywords"] = payload.keywords
+            return []
+
+    monkeypatch.setattr(nodes, "_training_tool", TrainingTool())
+
+    await nodes.policy_search_node(
+        {
+            "user_input": "무언가 새로운 기술을 배우고 싶어",
+            "request_kind": "training",
+            "search_query": "클라우드 엔지니어",
+            "profile": {"region": "서울", "desired_job": "데이터 분석"},
+        }
+    )
+
+    assert captured == {"desired_job": "클라우드 엔지니어", "keywords": "무언가 새로운 기술을 배우고 싶어"}
+
+
+async def test_grounded_tool_response_uses_llm_when_configured(monkeypatch):
+    llm = StubLLM("검색 결과를 바탕으로 정리한 답변")
+    monkeypatch.setattr(nodes, "_llm", llm)
+
+    result = await nodes.response_node(
+        {
+            "user_input": "데이터 분석 훈련과정 알려줘",
+            "profile": {"region": "서울"},
+            "training_results": [{"title": "데이터 분석 과정", "detail_url": "https://example.com/course"}],
+        }
+    )
+
+    assert result["final_response"] == "검색 결과를 바탕으로 정리한 답변"
+    assert len(llm.calls) == 1
 
 
 def test_score_policy_region_match_scores_higher_than_mismatch():
@@ -138,3 +308,24 @@ def test_normalize_bizinfo_items_accepts_nested_items_shape():
     payload = {"response": {"body": {"items": {"item": {"pblancId": "BIZ-1"}}}}}
 
     assert _normalize_bizinfo_items(payload) == [{"pblancId": "BIZ-1"}]
+
+
+def test_normalize_bizinfo_live_json_shape_and_dashed_period():
+    payload = {
+        "jsonArray": [
+            {
+                "pblancId": "BIZ-2",
+                "pblancNm": "청년창업 지원",
+                "reqstBeginEndDe": "2026-07-08 ~ 2026-07-21",
+                "pldirSportRealmLclasCodeNm": "창업",
+                "hashtags": "서울,AI",
+            }
+        ]
+    }
+
+    items = _normalize_bizinfo_items(payload)
+    normalized = _normalize_bizinfo_item(items[0])
+
+    assert normalized["region"] == ["서울"]
+    assert normalized["apply_start"] == "2026-07-08"
+    assert normalized["apply_end"] == "2026-07-21"

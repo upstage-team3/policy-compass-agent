@@ -36,7 +36,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("YOUTHCENTER_POLICY_API_KEY", "YOUTHCENTER_API_KEY"),
     )
     youthcenter_policy_api_url: str = Field(
-        default="https://www.youthcenter.go.kr/opi/youthPlcyList.do",
+        default="https://www.youthcenter.go.kr/go/ythip/getPlcy",
         validation_alias=AliasChoices("YOUTHCENTER_POLICY_API_URL", "YOUTHCENTER_API_URL"),
     )
 
@@ -50,11 +50,19 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("EMPLOYMENT24_TRAINING_API_URL"),
     )
 
-    # 고용24/워크넷 채용정보 API
+    # 고용24 개인회원 허용 API: 채용행사, 공채속보, 공채기업정보
     employment24_job_api_key: str | None = None
-    employment24_job_api_url: str = Field(
-        default="https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L01.do",
-        validation_alias=AliasChoices("EMPLOYMENT24_JOB_API_URL", "EMPLOYMENT24_API_URL"),
+    employment24_job_event_api_url: str = Field(
+        default="https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L11.do",
+        validation_alias=AliasChoices("EMPLOYMENT24_JOB_EVENT_API_URL"),
+    )
+    employment24_open_recruitment_api_url: str = Field(
+        default="https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L21.do",
+        validation_alias=AliasChoices("EMPLOYMENT24_OPEN_RECRUITMENT_API_URL"),
+    )
+    employment24_company_api_url: str = Field(
+        default="https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L31.do",
+        validation_alias=AliasChoices("EMPLOYMENT24_COMPANY_API_URL"),
     )
 
     # 기업마당 Open API - API 키가 없거나 호출에 실패하면 빈 결과 반환

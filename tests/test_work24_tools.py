@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from datetime import date
+from types import SimpleNamespace
+
+import httpx
 
 from app.graph import nodes
 from app.repositories.work24_recruitment import (
+    Work24RecruitmentRepository,
     is_personal_key_limited_response,
     normalize_recruitment_items,
     recruitment_fallback_guide,
@@ -13,7 +17,7 @@ from app.repositories.work24_training import (
     normalize_training_courses,
     training_fallback_guide,
 )
-from app.repositories.youthcenter import normalize_youth_policy_items
+from app.repositories.youthcenter import normalize_youth_policy_items, normalize_youth_policy_json
 from app.tools.schemas import RecruitmentInfoSearchInput, TrainingCourseSearchInput
 
 
@@ -102,6 +106,70 @@ def test_normalize_recruitment_items_maps_optional_fields():
     assert items[0].company == "테스트회사"
 
 
+def test_normalize_allowed_recruitment_event_and_company_shapes():
+    event_xml = """
+    <empEvList><empEvent><eventNo>E001</eventNo><eventNm>청년 채용박람회</eventNm>
+    <area>서울</area><eventTerm>2026-07-20 ~ 2026-07-21</eventTerm><startDt>20260720</startDt>
+    </empEvent></empEvList>
+    """
+    company_xml = """
+    <dhsOpenEmpHireInfoList><dhsOpenEmpHireInfo><empCoNo>C001</empCoNo><coNm>테스트기업</coNm>
+    <coIntroSummaryCont>AI 서비스 기업</coIntroSummaryCont><homepg>https://example.com</homepg>
+    </dhsOpenEmpHireInfo></dhsOpenEmpHireInfoList>
+    """
+
+    event = normalize_recruitment_items(event_xml, "event")[0]
+    company = normalize_recruitment_items(company_xml, "company")[0]
+
+    assert event.item_type == "event"
+    assert event.start_date == "2026-07-20"
+    assert event.end_date == "2026-07-21"
+    assert company.item_type == "company"
+    assert company.company == "테스트기업"
+
+
+async def test_recruitment_repository_calls_only_personal_member_allowed_endpoints(monkeypatch):
+    called_urls: list[str] = []
+    payloads = {
+        "210L21": "<dhsOpenEmpInfoList />",
+        "210L11": "<empEvList />",
+        "210L31": "<dhsOpenEmpHireInfoList />",
+    }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, params):
+            called_urls.append(url)
+            endpoint = next(code for code in payloads if code in url)
+            return httpx.Response(200, text=payloads[endpoint], request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("app.repositories.work24_recruitment.httpx.AsyncClient", FakeClient)
+    repository = Work24RecruitmentRepository()
+    repository._settings = SimpleNamespace(
+        employment24_job_api_key="test-key",
+        employment24_open_recruitment_api_url="https://example.com/210L21.do",
+        employment24_job_event_api_url="https://example.com/210L11.do",
+        employment24_company_api_url="https://example.com/210L31.do",
+    )
+
+    await repository.search(RecruitmentInfoSearchInput())
+
+    assert {url.rsplit("/", 1)[-1] for url in called_urls} == {
+        "210L11.do",
+        "210L21.do",
+        "210L31.do",
+    }
+    assert all("210L01" not in url for url in called_urls)
+
+
 def test_normalize_youth_policy_items_maps_expected_xml_shape():
     xml = """
     <response>
@@ -123,6 +191,51 @@ def test_normalize_youth_policy_items_maps_expected_xml_shape():
     assert items[0].policy_id == "Y001"
     assert items[0].title == "서울 청년 취업 지원"
     assert items[0].application_method == "온라인 신청"
+
+
+def test_normalize_youth_policy_items_supports_current_field_names_and_namespace():
+    xml = """
+    <response xmlns="urn:youth"><youthPolicy><plcyNo>Y002</plcyNo><plcyNm>AI 일경험 지원</plcyNm>
+    <sprvsnInstCdNm>고용노동부</sprvsnInstCdNm><plcySprtCn>직무 경험 제공</plcySprtCn>
+    <plcyAplyMthdCn>온라인</plcyAplyMthdCn></youthPolicy></response>
+    """
+
+    item = normalize_youth_policy_items(xml)[0]
+
+    assert item.policy_id == "Y002"
+    assert item.title == "AI 일경험 지원"
+    assert item.organization == "고용노동부"
+
+
+def test_normalize_youth_policy_json_maps_current_api_shape():
+    payload = {
+        "resultCode": 200,
+        "result": {
+            "youthPolicyList": [
+                {
+                    "plcyNo": "Y003",
+                    "plcyNm": "국민취업지원제도",
+                    "operInstCdNm": "고용노동부",
+                    "ptcpPrpTrgtCn": "취업을 원하는 청년",
+                    "sprtTrgtAgeLmtYn": "Y",
+                    "sprtTrgtMinAge": 19,
+                    "sprtTrgtMaxAge": 34,
+                    "plcySprtCn": "취업지원 서비스",
+                    "aplyYmd": "상시",
+                    "plcyAplyMthdCn": "온라인 신청",
+                    "aplyUrlAddr": "https://example.com/apply",
+                }
+            ]
+        },
+    }
+
+    item = normalize_youth_policy_json(payload)[0]
+
+    assert item.policy_id == "Y003"
+    assert item.title == "국민취업지원제도"
+    assert item.organization == "고용노동부"
+    assert "만 19~34세" in (item.target_summary or "")
+    assert item.detail_url == "https://example.com/apply"
 
 
 async def test_missing_slot_node_for_training_requires_job_and_region():
