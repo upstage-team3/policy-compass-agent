@@ -2,17 +2,122 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from app.core.llm import LLMUnavailableError, SolarLLMClient
 from app.core.prompts import (
+    CLARIFICATION_SYSTEM_PROMPT,
     CONVERSATION_SYSTEM_PROMPT,
     GROUNDED_DATA_RESPONSE_SYSTEM_PROMPT,
+    MISSING_SLOT_LABELS,
+    NO_RESULTS_SYSTEM_PROMPT,
     RESPONSE_SYSTEM_PROMPT,
 )
 from app.graph.fallbacks import general_reply as fallback_general_reply
 
 logger = logging.getLogger(__name__)
+
+_MARKDOWN_LINK = re.compile(r"\[([^\]]+)]\((https?://[^)]+)\)")
+_FORMAL_INTRO = re.compile(
+    r"사용자님의\s*질문\s*\([^\n]*\)\s*에\s*따라,[^\n]*(?:추천|안내)합니다\.?\s*",
+)
+_INTERNAL_FIELD_LABELS = {
+    "application_period": "신청 기간",
+    "application_method": "신청 방법",
+    "detail_url": "상세 링크",
+    "business_period": "사업 기간",
+}
+
+
+def clean_response_text(text: str) -> str:
+    """Keep chat responses readable in a plain-text UI even if an LLM emits Markdown."""
+
+    cleaned = _FORMAL_INTRO.sub("", text or "")
+    cleaned = _MARKDOWN_LINK.sub(r"\1 (\2)", cleaned)
+    for internal_name, label in _INTERNAL_FIELD_LABELS.items():
+        cleaned = cleaned.replace(internal_name, label)
+
+    lines: list[str] = []
+    for raw_line in cleaned.splitlines():
+        line = re.sub(r"^\s{0,3}#{1,6}\s*", "", raw_line)
+        line = re.sub(r"^\s*>\s?", "", line)
+        line = re.sub(r"^\s*\*\s+", "- ", line)
+        line = line.replace("**", "").replace("__", "").replace("`", "")
+        if line.strip().rstrip(":") in {"답변", "추천 정책", "안내 사항"}:
+            continue
+        if "누락된 신청 정보" in line:
+            continue
+        lines.append(line.rstrip())
+
+    result = "\n".join(lines).strip()
+    return re.sub(r"\n{3,}", "\n\n", result)
+
+
+def _compact_candidates(candidates: list[dict]) -> list[dict]:
+    compact: list[dict] = []
+    for candidate in candidates[:3]:
+        item = {}
+        for key, value in candidate.items():
+            if key == "raw":
+                continue
+            if value in (None, "", [], {}):
+                continue
+            if isinstance(value, str):
+                item[key] = value[:1200]
+            elif isinstance(value, dict):
+                item[key] = {
+                    nested_key: nested_value for nested_key, nested_value in value.items() if nested_key != "raw"
+                }
+            else:
+                item[key] = value
+        if candidate.get("source") == "youthcenter":
+            missing = [
+                label
+                for key, label in (
+                    ("application_period", "신청 기간"),
+                    ("application_method", "신청 방법"),
+                    ("detail_url", "상세 링크"),
+                )
+                if not candidate.get(key)
+            ]
+            if missing:
+                item["data_notice"] = f"온통청년 API에 {'·'.join(missing)} 정보가 등록되어 있지 않아요."
+        compact.append(item)
+    return compact
+
+
+async def compose_clarification_reply(
+    llm: SolarLLMClient,
+    *,
+    original_request: str,
+    profile: dict[str, Any],
+    missing_slots: list[str],
+    history: list[dict[str, str]],
+) -> str:
+    labels = [MISSING_SLOT_LABELS.get(slot, slot) for slot in missing_slots]
+    if llm.is_configured:
+        payload = {
+            "original_request": original_request,
+            "known_profile": profile,
+            "missing_slots": labels,
+            "recent_history": history[-6:],
+        }
+        try:
+            return clean_response_text(
+                await llm.complete(
+                    [
+                        {"role": "system", "content": CLARIFICATION_SYSTEM_PROMPT},
+                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                    ],
+                    temperature=0.2,
+                )
+            )
+        except LLMUnavailableError:
+            logger.info("LLM 미설정으로 조건 확인 템플릿을 사용합니다.")
+        except Exception:  # noqa: BLE001
+            logger.exception("조건 확인 LLM 호출 실패, 템플릿으로 폴백합니다.")
+    return "정확한 결과를 찾기 위해 " + ", ".join(labels) + "을 알려주시겠어요?"
 
 
 async def compose_grounded_results(
@@ -32,21 +137,67 @@ async def compose_grounded_results(
         "profile": profile,
         "source_type": source_type,
         "response_mode": response_mode,
-        "candidates": candidates[:3],
+        "candidates": _compact_candidates(candidates),
     }
     try:
-        return await llm.complete(
-            [
-                {"role": "system", "content": GROUNDED_DATA_RESPONSE_SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
-            temperature=0.2,
+        return clean_response_text(
+            await llm.complete(
+                [
+                    {"role": "system", "content": GROUNDED_DATA_RESPONSE_SYSTEM_PROMPT},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ],
+                temperature=0.2,
+            )
         )
     except LLMUnavailableError:
         logger.info("LLM 미설정으로 %s 응답 템플릿을 사용합니다.", source_type)
     except Exception:  # noqa: BLE001
         logger.exception("%s 검색 결과 LLM 생성 실패, 템플릿으로 폴백합니다.", source_type)
     return None
+
+
+async def compose_no_results_reply(
+    llm: SolarLLMClient,
+    *,
+    user_input: str,
+    profile: dict[str, Any],
+    source_type: str,
+    search_query: str | None,
+) -> str:
+    payload = {
+        "original_request": user_input,
+        "known_profile": profile,
+        "source_type": source_type,
+        "search_query": search_query,
+    }
+    if llm.is_configured:
+        try:
+            return clean_response_text(
+                await llm.complete(
+                    [
+                        {"role": "system", "content": NO_RESULTS_SYSTEM_PROMPT},
+                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                    ],
+                    temperature=0.2,
+                )
+            )
+        except LLMUnavailableError:
+            logger.info("LLM 미설정으로 검색 결과 없음 템플릿을 사용합니다.")
+        except Exception:  # noqa: BLE001
+            logger.exception("검색 결과 없음 LLM 호출 실패, 템플릿으로 폴백합니다.")
+
+    source_names = {
+        "youthcenter_policy": "온통청년 청년정책",
+        "work24_training": "고용24 훈련과정",
+        "work24_recruitment": "고용24 채용 보조정보",
+        "bizinfo": "기업마당 지원사업",
+    }
+    source_name = source_names.get(source_type, "공식 정책 데이터")
+    query_hint = f" '{search_query}' 검색어" if search_query else " 현재 조건"
+    return (
+        f"{source_name}에서{query_hint}에 맞는 결과를 찾지 못했어요. "
+        "이미 알려주신 조건은 유지할게요. 관심 분야를 조금 넓히거나 다른 표현으로 말씀해주시면 다시 찾아볼게요."
+    )
 
 
 async def compose_scored_results(
@@ -66,12 +217,14 @@ async def compose_scored_results(
         "candidates": scored,
     }
     try:
-        return await llm.complete(
-            [
-                {"role": "system", "content": RESPONSE_SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
-            temperature=0.4,
+        return clean_response_text(
+            await llm.complete(
+                [
+                    {"role": "system", "content": RESPONSE_SYSTEM_PROMPT},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ],
+                temperature=0.4,
+            )
         )
     except LLMUnavailableError:
         logger.info("LLM 미설정으로 응답 생성 템플릿을 사용합니다.")
@@ -80,16 +233,28 @@ async def compose_scored_results(
     return None
 
 
-async def compose_conversation_reply(llm: SolarLLMClient, *, query: str, response_mode: str) -> str:
+async def compose_conversation_reply(
+    llm: SolarLLMClient,
+    *,
+    query: str,
+    response_mode: str,
+    history: list[dict[str, str]],
+) -> str:
     if llm.is_configured:
         try:
-            payload = {"user_input": query, "response_mode": response_mode}
-            return await llm.complete(
-                [
-                    {"role": "system", "content": CONVERSATION_SYSTEM_PROMPT},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                ],
-                temperature=0.3,
+            payload = {
+                "user_input": query,
+                "response_mode": response_mode,
+                "recent_history": history[-8:],
+            }
+            return clean_response_text(
+                await llm.complete(
+                    [
+                        {"role": "system", "content": CONVERSATION_SYSTEM_PROMPT},
+                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                    ],
+                    temperature=0.3,
+                )
             )
         except LLMUnavailableError:
             logger.info("LLM 미설정으로 일반 대화 템플릿을 사용합니다.")
@@ -126,8 +291,7 @@ def compose_scored_template(scored: list[dict]) -> str:
 
 def compose_youth_policy_response(items: list[dict]) -> str:
     lines = [
-        "현재 조건을 기준으로 확인해볼 만한 청년지원사업을 정리했어요.",
-        "온통청년 키가 없거나 결과가 부족한 경우에는 내부 정책 데이터로 보완했어요.",
+        "현재 조건에서 확인해볼 만한 청년지원사업을 찾았어요. 우선 세 가지를 살펴볼게요.",
     ]
     for idx, item in enumerate(items[:3], start=1):
         lines.append("")
@@ -138,9 +302,25 @@ def compose_youth_policy_response(items: list[dict]) -> str:
             lines.append(f"   - 지역: {item['region']}")
         lines.append(f"   - 지원 대상: {item.get('target_summary') or '공식 공고 확인 필요'}")
         lines.append(f"   - 지원 내용: {item.get('support_summary') or '공식 공고 확인 필요'}")
-        lines.append(f"   - 신청 기간: {item.get('application_period') or '공식 공고 확인 필요'}")
-        lines.append(f"   - 신청 방법: {item.get('application_method') or '공식 공고 확인 필요'}")
-        lines.append(f"   - 원문 링크: {item.get('detail_url') or '공식 사이트 확인 필요'}")
+        if item.get("business_period"):
+            lines.append(f"   - 사업 기간: {item['business_period']}")
+        if item.get("application_period"):
+            lines.append(f"   - 신청 기간: {item['application_period']}")
+        if item.get("application_method"):
+            lines.append(f"   - 신청 방법: {item['application_method']}")
+        if item.get("detail_url"):
+            lines.append(f"   - 상세 링크: {item['detail_url']}")
+        missing = [
+            label
+            for key, label in (
+                ("application_period", "신청 기간"),
+                ("application_method", "신청 방법"),
+                ("detail_url", "상세 링크"),
+            )
+            if not item.get(key)
+        ]
+        if missing:
+            lines.append(f"   - 온통청년 API에 {'·'.join(missing)} 정보가 등록되어 있지 않아요.")
         if item.get("fallback_reason"):
             lines.append(f"   - 데이터 안내: {item['fallback_reason']}")
     lines.append("")

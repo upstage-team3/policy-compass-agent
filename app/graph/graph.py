@@ -2,8 +2,8 @@
 
 Router -> (Conversation | Profile Extractor -> Missing Slot -> Search ->
 Eligibility Scorer -> Response) -> Guardrail 순서로 흐른다.
-session_id 를 thread_id 로 사용하는 MemorySaver checkpointer를 통해 같은
-대화 안에서 프로필이 누적되도록 한다.
+session_id 를 thread_id 로 사용하는 MemorySaver는 실행 중 상태를 유지하고,
+API 경계의 Supabase 메모리는 재시작 뒤 최근 대화와 검색 계획을 복원한다.
 """
 
 from __future__ import annotations

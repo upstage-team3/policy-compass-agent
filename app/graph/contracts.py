@@ -43,6 +43,7 @@ class RoutingDecision(BaseModel):
     response_mode: ResponseMode
     request_kind: RequestKind
     search_query: str | None = None
+    resume_pending: bool = False
 
     @property
     def intent(self) -> Intent:

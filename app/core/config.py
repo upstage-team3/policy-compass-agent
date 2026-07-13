@@ -72,7 +72,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("BIZINFO_BASE_URL", "BIZINFO_API_URL"),
     )
 
-    # Supabase - fallback 캐시(예: training_courses) 조회/적재용. 미설정 시 해당 fallback 비활성화
+    # Supabase - 대화 메모리와 training_courses fallback 캐시 공용
     supabase_url: str | None = None
     supabase_key: str | None = None
 

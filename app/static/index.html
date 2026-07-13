@@ -88,12 +88,12 @@
   <div class="app">
     <header>
       <h1>🧭 정책나침반</h1>
-      <p>나이·지역·취업/창업 준비 상태를 알려주시면 맞는 정부 지원사업을 찾아드려요.</p>
+      <p>나이·지역과 관심 분야를 알려주시면 맞는 청년 지원정책을 찾아드려요.</p>
     </header>
     <div id="log"></div>
     <form id="form">
       <input id="input" type="text" autocomplete="off"
-        placeholder="예: 대학 졸업한지 6개월 됐고 서울에서 취업 준비 중인데 받을 수 있는 지원금 있어?" />
+        placeholder="예: 서울에 사는 만 24세인데 주거비 지원정책이 있을까?" />
       <button id="send" type="submit">전송</button>
     </form>
   </div>
@@ -104,6 +104,16 @@
     const form = document.getElementById("form");
     const input = document.getElementById("input");
     const sendBtn = document.getElementById("send");
+
+    function cleanDisplayText(text) {
+      return text
+        .replace(/^\s{0,3}#{1,6}\s*/gm, "")
+        .replace(/^\s*>\s?/gm, "")
+        .replace(/\[([^\]]+)]\((https?:\/\/[^)]+)\)/g, "$1 ($2)")
+        .replace(/\*\*/g, "")
+        .replace(/__/g, "")
+        .replace(/`/g, "");
+    }
 
     function addBubble(role, text) {
       const wrap = document.createElement("div");
@@ -121,6 +131,7 @@
       addBubble("user", message);
       const botBubble = addBubble("bot", "답변을 준비하고 있어요.");
       let hasToken = false;
+      let rawBotText = "";
       sendBtn.disabled = true;
 
       try {
@@ -152,7 +163,8 @@
                 botBubble.textContent = "";
                 hasToken = true;
               }
-              botBubble.textContent += payload.content;
+              rawBotText += payload.content;
+              botBubble.textContent = cleanDisplayText(rawBotText);
               log.scrollTop = log.scrollHeight;
             } else if (payload.type === "status") {
               if (!hasToken) botBubble.textContent = payload.message;

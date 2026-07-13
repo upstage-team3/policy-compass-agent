@@ -43,6 +43,8 @@ class YouthPolicyItem(BaseModel):
     region: str | None = None
     target_summary: str | None = None
     support_summary: str | None = None
+    business_period: str | None = None
+    business_end_date: str | None = None
     application_period: str | None = None
     application_method: str | None = None
     detail_url: str | None = None
