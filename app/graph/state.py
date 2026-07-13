@@ -13,7 +13,11 @@ class AgentState(TypedDict, total=False):
     session_id: str
     user_input: str
     intent: str
+    action: str
+    response_mode: str
     request_kind: str
+    search_query: str | None
+    routing_source: str
     profile: dict
     missing_slots: list[str]
     search_results: list[dict]

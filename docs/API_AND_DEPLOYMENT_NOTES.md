@@ -49,25 +49,29 @@ curl -X POST http://localhost:8000/api/chat \
 
 | 우선순위 | API | 역할 | 상태 |
 | --- | --- | --- | --- |
-| 1 | 고용24 국민내일배움카드 훈련과정 API | 취업 준비에 필요한 교육/훈련과정 조회 | 키 설정, 연결 가능 |
-| 2 | 고용24 채용정보 API | 채용행사, 공채속보, 공채기업정보 또는 채용 탐색 가이드 | 키 설정, 개인키 제한 있음 |
-| 3 | 온통청년 Open API | 청년 취업정책, 청년공간, 청년콘텐츠 조회 | 키 미설정 시 빈 결과 |
-| 4 | 기업마당 지원사업정보 API | 창업/사업자/중소기업 지원사업 보조 조회 | 키 설정, MVP 핵심에서 제외 |
+| 1 | 온통청년 Open API | 청년 취업정책 조회 | `apiKeyNm` JSON API live 성공 |
+| 2 | 고용24 국민내일배움카드 훈련과정 API | 취업 준비에 필요한 교육/훈련과정 조회 | live 성공 |
+| 3 | 고용24 채용정보 API | 채용행사, 공채속보, 공채기업정보 또는 채용 탐색 가이드 | 허용 3종 live 성공 |
+| 4 | 기업마당 지원사업정보 API | 창업/사업자/중소기업 지원사업 조회 | live 성공 |
 
-취업 MVP에서는 고용24 국민내일배움카드 훈련과정을 우선 실데이터로 연결하고, 온통청년은 키 발급 전까지 내부 대체 데이터로 보완하지 않고 빈 결과로 처리한다. 정규화 스키마와 normalizer만 유지한다.
+현재 로컬 `.env`에는 5개 API 키가 모두 설정되어 있다. 2026-07-13 기준 Solar, 온통청년, 고용24 훈련, 고용24 허용 채용 3종, 기업마당 실제 호출에 모두 성공했다. 어떤 API도 연결 실패를 내부 대체 데이터로 숨기지 않는다.
 고용24 채용정보 API는 개인 신청 키에서 채용행사, 공채속보, 공채기업정보만 사용할 수 있다.
 채용정보목록과 채용정보상세 API는 개인회원 키로 사용할 수 없으므로,
 직접 공고 조회가 필요할 때는 채용 탐색 가이드로 폴백한다.
 기업마당은 오늘 핵심 청년 취업 MVP에서는 제외하고, 창업 또는 사업자 관련 질문이 들어올 때만 보조 데이터 소스로 사용한다.
 Tool 입력/출력 스키마와 사용자에게 먼저 물어볼 조건은 `docs/API_TOOL_SCHEMA_DESIGN.md`를 기준으로 구현한다.
 
-Day3 revised 구현 상태:
+현재 구현 상태:
 
 - `YouthPolicySearchInput`, `TrainingCourseSearchInput`, `RecruitmentInfoSearchInput` 스키마 추가
 - 고용24 훈련과정 XML normalizer와 탐색 fallback 추가
-- 고용24 채용정보 개인회원 권한 제한 감지 및 채용 탐색 가이드 fallback 추가
-- 온통청년 키 미설정 시 빈 결과 반환
-- 검증 기준: `uv run python -m pytest` 37개 통과
+- 고용24 채용행사·공채속보·공채기업정보 응답 normalizer와 실제 호출 추가
+- 권한이 없는 채용정보목록·상세 endpoint는 설정과 코드 호출 대상에서 제외
+- 외부 API 예외 로그에서 URL·query string·인증키 제외
+- LLM 기반 `action`, `response_mode`, `request_kind`, `search_query` 계획과 Tool 단일 선택 추가
+- 키워드 규칙을 `app/graph/fallbacks.py`로 격리
+- 온통청년 `getPlcy` JSON 응답과 `YouthPolicyItem` normalizer 추가
+- 검증 기준: Ruff 통과, `uv run pytest tests -q` 53개 통과
 
 ## 온통청년 Open API
 
@@ -87,9 +91,10 @@ https://www.youthcenter.go.kr/cmnFooter/openapiIntro/oaiGuide
 주요 특징:
 
 - HTTPS 기반 API
-- 응답 형식은 XML
+- 응답 형식은 JSON
 - 청년정책, 청년공간, 청년콘텐츠 정보를 제공
-- 청년정책 목록 예시 URL: `https://www.youthcenter.go.kr/opi/youthPlcyList.do`
+- 청년정책 목록 URL: `https://www.youthcenter.go.kr/go/ythip/getPlcy`
+- 인증키는 `apiKeyNm`, 페이징은 `pageNum`/`pageSize`, 정책명 검색은 `plcyNm`을 사용
 
 MVP 활용:
 
@@ -101,7 +106,7 @@ MVP 활용:
 
 ```env
 YOUTHCENTER_POLICY_API_KEY=
-YOUTHCENTER_POLICY_API_URL=https://www.youthcenter.go.kr/opi/youthPlcyList.do
+YOUTHCENTER_POLICY_API_URL=https://www.youthcenter.go.kr/go/ythip/getPlcy
 ```
 
 ## 고용24/HRD-Net 국민내일배움카드 훈련과정 API
@@ -146,7 +151,9 @@ MVP 활용:
 
 ```env
 EMPLOYMENT24_JOB_API_KEY=
-EMPLOYMENT24_JOB_API_URL=https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L01.do
+EMPLOYMENT24_JOB_EVENT_API_URL=https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L11.do
+EMPLOYMENT24_OPEN_RECRUITMENT_API_URL=https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L21.do
+EMPLOYMENT24_COMPANY_API_URL=https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L31.do
 ```
 
 연동 시 확인할 것:
@@ -204,11 +211,13 @@ pageIndex
 ```env
 UPSTAGE_API_KEY=
 YOUTHCENTER_POLICY_API_KEY=
-YOUTHCENTER_POLICY_API_URL=https://www.youthcenter.go.kr/opi/youthPlcyList.do
+YOUTHCENTER_POLICY_API_URL=https://www.youthcenter.go.kr/go/ythip/getPlcy
 EMPLOYMENT24_TRAINING_API_KEY=
 EMPLOYMENT24_TRAINING_API_URL=https://www.work24.go.kr/cm/openApi/call/hr/callOpenApiSvcInfo310L01.do
 EMPLOYMENT24_JOB_API_KEY=
-EMPLOYMENT24_JOB_API_URL=https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L01.do
+EMPLOYMENT24_JOB_EVENT_API_URL=https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L11.do
+EMPLOYMENT24_OPEN_RECRUITMENT_API_URL=https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L21.do
+EMPLOYMENT24_COMPANY_API_URL=https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L31.do
 BIZINFO_API_KEY=
 BIZINFO_API_URL=https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do
 SERVICE_NAME=policy-compass
@@ -226,11 +235,12 @@ CORS_ORIGINS=["*"]
 
 ## LLM 사용 메모
 
-Upstage Solar API 키가 있으면 LLM 기반 Router/Profile/Response를 사용할 수 있다. 키가 없거나 호출에 실패하면 규칙 기반 fallback이 동작한다.
+Upstage Solar API 키가 있으면 Router가 `action`, `response_mode`, `request_kind`, `search_query`를 함께 생성하고, Profile과 Response도 LLM을 우선 사용한다. Router 출력은 `app/graph/contracts.py`의 `RoutingDecision`으로 검증한다. `RESPOND`는 통합 Conversation Node, `SEARCH`는 Tool 경로로 이동한다. 정상 LLM 판단은 키워드 규칙이 덮어쓰지 않으며, 키 누락·호출 실패·계약 오류 때만 `app/graph/fallbacks.py`가 동작한다.
 
 정책 추천에서 LLM은 다음 역할로 제한한다.
 
 - 사용자 조건 추출 보조
+- 질문 의미 기반 의도·Tool·검색어 계획
 - 후보 정책을 사용자 관점으로 설명
 - 확인 필요 조건을 자연어로 정리
 
@@ -240,6 +250,8 @@ LLM이 하면 안 되는 것:
 - 출처 없는 금액, 날짜, 자격 조건 생성
 - 최종 자격 판정
 - 민감 개인정보 요청
+
+검색 결과 응답은 `app/graph/response_composer.py`가 담당한다. 후보 데이터가 있으면 grounded LLM 응답을 시도하고, 실패하면 같은 데이터를 사용하는 결정론적 템플릿으로 전환한다.
 
 ## Docker
 

@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from app.core.config import get_settings
+from app.core.http import log_external_api_error
 from app.schemas.policy import PolicyItem
 from app.tools.schemas import PolicySearchInput
 
@@ -55,35 +56,50 @@ class PolicyRepository:
     def __init__(self) -> None:
         self._settings = get_settings()
 
-    async def _fetch_remote(self) -> list[dict[str, Any]] | None:
+    async def _fetch_remote(self, query: PolicySearchInput | None = None) -> list[dict[str, Any]] | None:
         if not self._settings.bizinfo_api_key:
             return None
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 response = await client.get(
                     self._settings.bizinfo_base_url,
-                    params={
-                        "crtfcKey": self._settings.bizinfo_api_key,
-                        "dataType": "json",
-                        "pageUnit": "20",
-                        "pageIndex": "1",
-                    },
+                    params=self._build_params(query),
                 )
                 response.raise_for_status()
                 payload = response.json()
-        except Exception:  # noqa: BLE001 - 외부 API 장애 시 빈 결과 반환
-            logger.warning("기업마당 API 호출 실패, 빈 결과를 반환합니다.", exc_info=True)
+        except Exception as exc:  # noqa: BLE001 - 외부 API 장애 시 빈 결과 반환
+            log_external_api_error(logger, "기업마당 API", exc)
             return None
 
         records = [_normalize_bizinfo_item(item) for item in _normalize_bizinfo_items(payload)]
         return records or None
 
-    async def _all_policies(self) -> list[dict[str, Any]]:
-        remote = await self._fetch_remote()
+    def _build_params(self, query: PolicySearchInput | None) -> dict[str, str]:
+        limit = min(max(query.limit if query else 20, 1), 100)
+        params = {
+            "crtfcKey": self._settings.bizinfo_api_key or "",
+            "dataType": "json",
+            "searchCnt": str(limit),
+            "pageUnit": str(limit),
+            "pageIndex": "1",
+        }
+        if query and (query.is_entrepreneur or "창업" in query.keywords):
+            params["searchLclasId"] = FIELD_CODES["창업"]
+        hashtags = []
+        if query and query.region:
+            hashtags.append(query.region)
+        if query:
+            hashtags.extend(query.interest_fields)
+        if hashtags:
+            params["hashtags"] = ",".join(dict.fromkeys(hashtags))
+        return params
+
+    async def _all_policies(self, query: PolicySearchInput | None = None) -> list[dict[str, Any]]:
+        remote = await self._fetch_remote(query)
         return remote if remote is not None else []
 
     async def search(self, query: PolicySearchInput) -> list[PolicyItem]:
-        policies = await self._all_policies()
+        policies = await self._all_policies(query)
         candidates = policies
 
         if query.is_entrepreneur:
@@ -140,6 +156,8 @@ def _first_non_empty(item: dict[str, Any], *keys: str) -> str:
 
 def _normalize_bizinfo_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     root = payload.get("jsonArray") or payload.get("response") or payload.get("body") or payload
+    if isinstance(root, list):
+        return [item for item in root if isinstance(item, dict)]
     while isinstance(root, dict) and "body" in root:
         root = root["body"]
     if isinstance(root, dict) and "items" in root and isinstance(root["items"], dict):
@@ -151,21 +169,26 @@ def _normalize_bizinfo_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _period_dates(period: str | None) -> tuple[str | None, str | None]:
-    dates = re.findall(r"\d{8}", period or "")
+    dates = re.findall(r"\d{4}[-./]?\d{2}[-./]?\d{2}", period or "")
     if not dates:
         return None, None
     start = None
     end = None
     try:
-        start = datetime.strptime(dates[0], "%Y%m%d").date().isoformat()
+        start = _parse_date(dates[0])
     except ValueError:
         start = None
     if len(dates) >= 2:
         try:
-            end = datetime.strptime(dates[-1], "%Y%m%d").date().isoformat()
+            end = _parse_date(dates[-1])
         except ValueError:
             end = None
     return start, end
+
+
+def _parse_date(value: str) -> str:
+    compact = re.sub(r"\D", "", value)
+    return datetime.strptime(compact, "%Y%m%d").date().isoformat()
 
 
 def _normalize_category(raw_category: str) -> str:

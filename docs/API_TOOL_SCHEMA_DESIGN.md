@@ -12,8 +12,8 @@
 | 우선순위 | API | 환경변수 | 현재 기준 | 역할 |
 | --- | --- | --- | --- | --- |
 | 1 | 고용24 국민내일배움카드 훈련과정 API | `EMPLOYMENT24_TRAINING_API_KEY`, `EMPLOYMENT24_TRAINING_API_URL` | 키 설정, 연결 가능 | 직무별 교육/훈련과정 추천 |
-| 2 | 고용24 채용정보 API | `EMPLOYMENT24_JOB_API_KEY`, `EMPLOYMENT24_JOB_API_URL` | 키 설정, 개인키 제한 있음 | 채용행사/공채속보/공채기업정보 제공, 직접 공고는 탐색 가이드 |
-| 3 | 온통청년 청년정책 API | `YOUTHCENTER_POLICY_API_KEY`, `YOUTHCENTER_POLICY_API_URL` | 키 미설정 | 청년 취업정책, 지원금, 일경험, 상담, 공간 정보 스키마 준비. 키가 없으면 빈 결과 |
+| 2 | 고용24 채용정보 API | `EMPLOYMENT24_JOB_API_KEY` | 허용 3종 live 검증 완료 | 채용행사/공채속보/공채기업정보 제공, 직접 공고는 탐색 가이드 |
+| 3 | 온통청년 청년정책 API | `YOUTHCENTER_POLICY_API_KEY`, `YOUTHCENTER_POLICY_API_URL` | JSON live 검증 완료 | 청년 취업정책, 지원금, 일경험, 상담, 공간 정보 |
 
 기업마당 API는 오늘 핵심 MVP에서 제외하고, 창업/사업자 질문이 들어올 때만 보조 데이터로 사용한다.
 
@@ -21,9 +21,9 @@
 
 ## 실제 호출 확인 결과
 
-확인일: 2026-07-10
+최종 확인일: 2026-07-13
 
-온통청년은 인증키 미입력 상태라 호출하지 않았다. 고용24 국민내일배움카드 훈련과정 API와 고용24 채용정보 API는 `.env`의 인증키와 URL로 직접 호출해 확인했다.
+고용24 훈련, 고용24 허용 채용 3종, 기업마당, Upstage Solar, 온통청년을 `.env`의 인증키로 직접 호출해 확인했다.
 
 ### 고용24 국민내일배움카드 훈련과정 API
 
@@ -115,20 +115,17 @@ MVP에서 우선 사용할 필드:
 요청 URL:
 
 ```text
-https://www.youthcenter.go.kr/opi/youthPlcyList.do
+https://www.youthcenter.go.kr/go/ythip/getPlcy
 ```
 
 주요 파라미터:
 
 | 파라미터 | 설명 | 내부 매핑 |
 | --- | --- | --- |
-| `openApiVlak` | 인증키 | `YOUTHCENTER_POLICY_API_KEY` |
-| `pageIndex` | 페이지 번호 | `page` |
-| `display` | 페이지 크기 | `page_size` |
-| `query` | 검색어 | `keywords` |
-| `bizTycdSel` | 사업 유형 코드 | `support_type_codes` |
-| `srchPolyBizSecd` | 정책 분야 코드 | `policy_category_codes` |
-| `keyword` | 키워드 | `keywords`, `desired_job`, `interest_fields` |
+| `apiKeyNm` | 인증키 | `YOUTHCENTER_POLICY_API_KEY` |
+| `pageNum` | 페이지 번호 | `page` |
+| `pageSize` | 페이지 크기 | `page_size` |
+| `plcyNm` | 정책명 검색어 | `keywords`, `interest_fields` |
 
 가져와야 할 정보:
 
@@ -203,10 +200,12 @@ https://www.work24.go.kr/cm/openApi/call/hr/callOpenApiSvcInfo310L01.do
 
 ### 3. 고용24 채용정보 API
 
-요청 URL:
+허용된 요청 URL:
 
 ```text
-https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L01.do
+https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L11.do  # 채용행사
+https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L21.do  # 공채속보
+https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L31.do  # 공채기업정보
 ```
 
 스크린샷 기준 기본 검색 예시:
@@ -405,18 +404,18 @@ class RecruitmentInfoItem(BaseModel):
 
 1. [x] `app/tools/schemas.py`에 3개 입력 스키마를 추가한다.
 2. [x] 정책, 훈련과정, 채용행사/공채속보/공채기업정보 출력 스키마를 추가한다.
-3. [x] `app/repositories/youthcenter.py`를 추가해 온통청년 XML 응답을 정규화한다.
+3. [x] `app/repositories/youthcenter.py`에서 온통청년 JSON `result.youthPolicyList` 응답을 정규화한다.
 4. [x] `app/repositories/work24_training.py`를 추가해 훈련과정 XML 응답을 정규화한다.
-5. [x] `app/repositories/work24_recruitment.py`를 추가해 고용24 채용정보 응답을 정규화하고 권한 제한을 감지한다.
-6. [x] 채용정보목록/상세 호출은 권한 제한 응답을 감지해 fallback reason을 반환한다.
+5. [x] `app/repositories/work24_recruitment.py`에서 채용행사·공채속보·공채기업정보를 각각 정규화한다.
+6. [x] 권한이 없는 채용정보목록/상세 endpoint는 설정과 코드 호출 대상에서 제외한다.
 7. [x] `app/tools/executor.py`에 청년정책/훈련/채용 보조 Tool을 추가한다.
 8. [x] Missing Slot Node가 Tool 호출 전 필수 조건을 확인하도록 보강한다.
 9. [x] Response Node가 정책/훈련/채용 탐색 가이드를 한 답변 안에서 구분해 설명하도록 수정한다.
 
 현재 남은 구현:
 
-- [ ] 고용24 채용행사/공채속보/공채기업정보 세부 endpoint 확인 및 추가
-- [ ] 온통청년 키 발급 후 실제 호출 결과 검증
+- [x] 고용24 채용행사/공채속보/공채기업정보 endpoint 실제 호출 검증
+- [x] 온통청년 `getPlcy`/`apiKeyNm` JSON 응답과 정책 3건 실제 검증
 - [ ] 새 Tool 결과의 SSE/UI 수동 QA
 
 ## MVP 주의사항
