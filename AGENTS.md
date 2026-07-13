@@ -37,4 +37,4 @@ uv run ruff format app tests --check
 uv run pytest tests -q
 ```
 
-The current expected baseline is `64 passed`. Unit tests must remain deterministic without external API keys or network access.
+The current expected baseline is `78 passed`. Unit tests must remain deterministic without external API keys or network access.

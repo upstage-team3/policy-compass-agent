@@ -19,7 +19,9 @@ from app.repositories.work24_training import (
 )
 from app.repositories.youthcenter import (
     _build_youth_search_terms,
+    _filter_active_youth_policies,
     _filter_youth_policies_by_region,
+    is_generic_youth_policy_query,
     normalize_youth_policy_items,
     normalize_youth_policy_json,
 )
@@ -36,6 +38,11 @@ def test_default_training_period_uses_six_month_window():
 
     assert start == "20260710"
     assert end == "20270109"
+
+
+def test_generic_youth_policy_query_recognizes_natural_broad_request_but_not_topic_request():
+    assert is_generic_youth_policy_query("청년 지원 정책에 대한 정보를 얻고 싶어")
+    assert not is_generic_youth_policy_query("청년 주거 지원 정책에 대한 정보를 얻고 싶어")
 
 
 def test_normalize_training_courses_maps_core_fields():
@@ -231,6 +238,8 @@ def test_normalize_youth_policy_json_maps_current_api_shape():
                     "sprtTrgtMinAge": 19,
                     "sprtTrgtMaxAge": 34,
                     "plcySprtCn": "취업지원 서비스",
+                    "bizPrdBgngYmd": "20260101",
+                    "bizPrdEndYmd": "20261231",
                     "aplyYmd": "상시",
                     "plcyAplyMthdCn": "온라인 신청",
                     "aplyUrlAddr": "https://example.com/apply",
@@ -245,6 +254,8 @@ def test_normalize_youth_policy_json_maps_current_api_shape():
     assert item.title == "국민취업지원제도"
     assert item.organization == "고용노동부"
     assert "만 19~34세" in (item.target_summary or "")
+    assert item.business_period == "2026-01-01 ~ 2026-12-31"
+    assert item.business_end_date == "2026-12-31"
     assert item.detail_url == "https://example.com/apply"
 
 
@@ -281,6 +292,28 @@ def test_youth_search_terms_use_profile_for_generic_request():
     assert terms == ["취업"]
 
 
+def test_youth_search_terms_use_official_policy_topic_for_generic_request():
+    terms = _build_youth_search_terms(
+        YouthPolicySearchInput(
+            keywords="청년 지원 정책",
+            support_types=["금융·복지·문화"],
+        )
+    )
+
+    assert terms == ["금융·복지·문화", "복지"]
+
+
+def test_youth_search_terms_do_not_replace_specific_query_with_broad_profile_topic():
+    terms = _build_youth_search_terms(
+        YouthPolicySearchInput(
+            keywords="고립 은둔",
+            support_types=["금융·복지·문화"],
+        )
+    )
+
+    assert terms == ["고립 은둔"]
+
+
 def test_youth_policy_region_filter_keeps_matching_and_nationwide_items():
     items = [
         YouthPolicyItem(policy_id="seoul", title="서울 정책", region="서울", raw={"zipCd": "11110"}),
@@ -291,6 +324,18 @@ def test_youth_policy_region_filter_keeps_matching_and_nationwide_items():
     filtered = _filter_youth_policies_by_region(items, "서울")
 
     assert [item.policy_id for item in filtered] == ["seoul", "all"]
+
+
+def test_youth_policy_active_filter_excludes_ended_business_period():
+    items = [
+        YouthPolicyItem(policy_id="expired", title="지난 정책", business_end_date="2025-12-31"),
+        YouthPolicyItem(policy_id="active", title="현재 정책", business_end_date="2026-12-31"),
+        YouthPolicyItem(policy_id="unknown", title="기간 미등록 정책"),
+    ]
+
+    filtered = _filter_active_youth_policies(items, today=date(2026, 7, 13))
+
+    assert [item.policy_id for item in filtered] == ["active", "unknown"]
 
 
 async def test_missing_slot_node_for_training_requires_job_and_region():

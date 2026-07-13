@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import xml.etree.ElementTree as ET
+from datetime import date, datetime
 from typing import Any
 
 import httpx
@@ -25,13 +26,20 @@ _GENERIC_POLICY_QUERIES = {
     "지원",
     "지원 사업",
     "지원사업",
+    "청년 지원",
+    "청년지원",
+    "청년 지원 정책",
+    "청년지원정책",
+    "청년 지원사업",
+    "청년지원사업",
 }
 _POLICY_TOPIC_ALIASES = (
-    (("거주지원", "주거지원", "주거비", "월세", "전세"), "주거"),
-    (("취업지원", "구직지원", "취업", "구직", "일경험"), "취업"),
+    (("거주지원", "주거지원", "주거비", "월세", "전세", "주거"), "주거"),
+    (("취업지원", "구직지원", "취업", "구직", "일경험", "일자리"), "취업"),
     (("창업지원", "창업"), "창업"),
-    (("교육지원", "직업훈련", "역량강화"), "교육"),
-    (("복지지원", "생활지원"), "복지"),
+    (("교육지원", "직업훈련", "역량강화", "교육", "훈련"), "교육"),
+    (("금융지원", "자산형성", "복지지원", "생활지원", "문화지원", "금융", "복지", "문화"), "복지"),
+    (("청년참여", "청년권리", "정책참여", "참여", "권리", "기반"), "참여"),
 )
 _REGION_PREFIXES = {
     "서울": "11",
@@ -97,6 +105,8 @@ def normalize_youth_policy_items(xml_text: str) -> list[YouthPolicyItem]:
             region=_first(values, "polyBizSecd", "zipCd", "regionNm", "region"),
             target_summary=_first(values, "ageInfo", "plcySprtTrgtCn", "target", "rqutPrdCn"),
             support_summary=_first(values, "sporCn", "plcySprtCn", "support", "content"),
+            business_period=_business_period(values),
+            business_end_date=_iso_date(values.get("bizPrdEndYmd")),
             application_period=_first(values, "rqutPrdCn", "aplyYmd", "applicationPeriod"),
             application_method=_first(values, "rqutProcCn", "plcyAplyMthdCn", "applicationMethod"),
             detail_url=_first(values, "rfcSiteUrla1", "aplyUrlAddr", "detailUrl", "url"),
@@ -136,6 +146,8 @@ def normalize_youth_policy_json(payload: dict[str, Any]) -> list[YouthPolicyItem
                 region=_region_label(_first(values, "zipCd", "regionNm", "region")),
                 target_summary=" / ".join(part for part in target_parts if part) or None,
                 support_summary=_first(values, "plcySprtCn", "plcyExplnCn", "support"),
+                business_period=_business_period(values),
+                business_end_date=_iso_date(values.get("bizPrdEndYmd")),
                 application_period=_first(values, "aplyYmd", "rqutPrdCn", "applicationPeriod"),
                 application_method=_first(values, "plcyAplyMthdCn", "rqutProcCn", "applicationMethod"),
                 detail_url=_first(values, "aplyUrlAddr", "refUrlAddr1", "refUrlAddr2", "url"),
@@ -153,6 +165,30 @@ def _age_summary(values: dict[str, str | None]) -> str | None:
     if minimum and maximum:
         return f"만 {minimum}~{maximum}세"
     return None
+
+
+def _iso_date(value: str | None) -> str | None:
+    if not value:
+        return None
+    compact = re.sub(r"\D", "", value)
+    if len(compact) != 8:
+        return value
+    try:
+        return datetime.strptime(compact, "%Y%m%d").date().isoformat()
+    except ValueError:
+        return value
+
+
+def _business_period(values: dict[str, str | None]) -> str | None:
+    start = _iso_date(values.get("bizPrdBgngYmd"))
+    end = _iso_date(values.get("bizPrdEndYmd"))
+    if start and end:
+        return f"{start} ~ {end}"
+    if start:
+        return f"{start}부터"
+    if end:
+        return f"{end}까지"
+    return values.get("bizPrdEtcCn")
 
 
 def _region_label(zip_codes: str | None) -> str | None:
@@ -182,18 +218,58 @@ def _filter_youth_policies_by_region(
     ]
 
 
+def _filter_active_youth_policies(
+    items: list[YouthPolicyItem],
+    today: date | None = None,
+) -> list[YouthPolicyItem]:
+    reference_date = today or date.today()
+    active: list[YouthPolicyItem] = []
+    for item in items:
+        if not item.business_end_date:
+            active.append(item)
+            continue
+        try:
+            end_date = date.fromisoformat(item.business_end_date)
+        except ValueError:
+            active.append(item)
+            continue
+        if end_date >= reference_date:
+            active.append(item)
+    return active
+
+
+def is_generic_youth_policy_query(value: str | None) -> bool:
+    if not value:
+        return True
+    normalized = " ".join(value.split()).strip()
+    compact = re.sub(r"\s+", "", normalized)
+    compact_generic_queries = {re.sub(r"\s+", "", item) for item in _GENERIC_POLICY_QUERIES}
+    if normalized in _GENERIC_POLICY_QUERIES or compact in compact_generic_queries:
+        return True
+
+    if any(alias in compact for aliases, _ in _POLICY_TOPIC_ALIASES for alias in aliases):
+        return False
+
+    broad_phrases = ("청년정책", "청년지원정책", "청년지원사업", "청년지원")
+    return any(phrase in compact for phrase in broad_phrases)
+
+
 def _build_youth_search_terms(query: YouthPolicySearchInput) -> list[str | None]:
     """Build progressively broader title searches for the current Youth Center API."""
 
     terms: list[str] = []
     recognized_topic = False
-    candidates = [query.keywords, *query.support_types, *query.interest_fields]
+    keyword = " ".join(query.keywords.split()).strip()
+    has_specific_keyword = bool(keyword and not is_generic_youth_policy_query(keyword))
+    candidates = (
+        [query.keywords] if has_specific_keyword else [query.keywords, *query.support_types, *query.interest_fields]
+    )
 
     for candidate in candidates:
         normalized = " ".join(candidate.split()).strip()
         if not normalized:
             continue
-        if normalized not in _GENERIC_POLICY_QUERIES and normalized not in terms:
+        if not is_generic_youth_policy_query(normalized) and normalized not in terms:
             terms.append(normalized[:50])
 
         compact = re.sub(r"\s+", "", normalized)
@@ -243,6 +319,7 @@ class YouthCenterRepository:
                     params["plcyNm"] = search_term
                 items = await self._fetch(client, api_url, params)
                 items = _filter_youth_policies_by_region(items, query.region)
+                items = _filter_active_youth_policies(items)
                 if items:
                     return items[: query.page_size]
         return []

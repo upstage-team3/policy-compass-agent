@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from app.core.llm import LLMUnavailableError, SolarLLMClient
@@ -17,6 +18,41 @@ from app.graph.fallbacks import general_reply as fallback_general_reply
 
 logger = logging.getLogger(__name__)
 
+_MARKDOWN_LINK = re.compile(r"\[([^\]]+)]\((https?://[^)]+)\)")
+_FORMAL_INTRO = re.compile(
+    r"사용자님의\s*질문\s*\([^\n]*\)\s*에\s*따라,[^\n]*(?:추천|안내)합니다\.?\s*",
+)
+_INTERNAL_FIELD_LABELS = {
+    "application_period": "신청 기간",
+    "application_method": "신청 방법",
+    "detail_url": "상세 링크",
+    "business_period": "사업 기간",
+}
+
+
+def clean_response_text(text: str) -> str:
+    """Keep chat responses readable in a plain-text UI even if an LLM emits Markdown."""
+
+    cleaned = _FORMAL_INTRO.sub("", text or "")
+    cleaned = _MARKDOWN_LINK.sub(r"\1 (\2)", cleaned)
+    for internal_name, label in _INTERNAL_FIELD_LABELS.items():
+        cleaned = cleaned.replace(internal_name, label)
+
+    lines: list[str] = []
+    for raw_line in cleaned.splitlines():
+        line = re.sub(r"^\s{0,3}#{1,6}\s*", "", raw_line)
+        line = re.sub(r"^\s*>\s?", "", line)
+        line = re.sub(r"^\s*\*\s+", "- ", line)
+        line = line.replace("**", "").replace("__", "").replace("`", "")
+        if line.strip().rstrip(":") in {"답변", "추천 정책", "안내 사항"}:
+            continue
+        if "누락된 신청 정보" in line:
+            continue
+        lines.append(line.rstrip())
+
+    result = "\n".join(lines).strip()
+    return re.sub(r"\n{3,}", "\n\n", result)
+
 
 def _compact_candidates(candidates: list[dict]) -> list[dict]:
     compact: list[dict] = []
@@ -24,6 +60,8 @@ def _compact_candidates(candidates: list[dict]) -> list[dict]:
         item = {}
         for key, value in candidate.items():
             if key == "raw":
+                continue
+            if value in (None, "", [], {}):
                 continue
             if isinstance(value, str):
                 item[key] = value[:1200]
@@ -33,6 +71,18 @@ def _compact_candidates(candidates: list[dict]) -> list[dict]:
                 }
             else:
                 item[key] = value
+        if candidate.get("source") == "youthcenter":
+            missing = [
+                label
+                for key, label in (
+                    ("application_period", "신청 기간"),
+                    ("application_method", "신청 방법"),
+                    ("detail_url", "상세 링크"),
+                )
+                if not candidate.get(key)
+            ]
+            if missing:
+                item["data_notice"] = f"온통청년 API에 {'·'.join(missing)} 정보가 등록되어 있지 않아요."
         compact.append(item)
     return compact
 
@@ -54,12 +104,14 @@ async def compose_clarification_reply(
             "recent_history": history[-6:],
         }
         try:
-            return await llm.complete(
-                [
-                    {"role": "system", "content": CLARIFICATION_SYSTEM_PROMPT},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                ],
-                temperature=0.2,
+            return clean_response_text(
+                await llm.complete(
+                    [
+                        {"role": "system", "content": CLARIFICATION_SYSTEM_PROMPT},
+                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                    ],
+                    temperature=0.2,
+                )
             )
         except LLMUnavailableError:
             logger.info("LLM 미설정으로 조건 확인 템플릿을 사용합니다.")
@@ -88,12 +140,14 @@ async def compose_grounded_results(
         "candidates": _compact_candidates(candidates),
     }
     try:
-        return await llm.complete(
-            [
-                {"role": "system", "content": GROUNDED_DATA_RESPONSE_SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
-            temperature=0.2,
+        return clean_response_text(
+            await llm.complete(
+                [
+                    {"role": "system", "content": GROUNDED_DATA_RESPONSE_SYSTEM_PROMPT},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ],
+                temperature=0.2,
+            )
         )
     except LLMUnavailableError:
         logger.info("LLM 미설정으로 %s 응답 템플릿을 사용합니다.", source_type)
@@ -118,12 +172,14 @@ async def compose_no_results_reply(
     }
     if llm.is_configured:
         try:
-            return await llm.complete(
-                [
-                    {"role": "system", "content": NO_RESULTS_SYSTEM_PROMPT},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                ],
-                temperature=0.2,
+            return clean_response_text(
+                await llm.complete(
+                    [
+                        {"role": "system", "content": NO_RESULTS_SYSTEM_PROMPT},
+                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                    ],
+                    temperature=0.2,
+                )
             )
         except LLMUnavailableError:
             logger.info("LLM 미설정으로 검색 결과 없음 템플릿을 사용합니다.")
@@ -161,12 +217,14 @@ async def compose_scored_results(
         "candidates": scored,
     }
     try:
-        return await llm.complete(
-            [
-                {"role": "system", "content": RESPONSE_SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
-            temperature=0.4,
+        return clean_response_text(
+            await llm.complete(
+                [
+                    {"role": "system", "content": RESPONSE_SYSTEM_PROMPT},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ],
+                temperature=0.4,
+            )
         )
     except LLMUnavailableError:
         logger.info("LLM 미설정으로 응답 생성 템플릿을 사용합니다.")
@@ -189,12 +247,14 @@ async def compose_conversation_reply(
                 "response_mode": response_mode,
                 "recent_history": history[-8:],
             }
-            return await llm.complete(
-                [
-                    {"role": "system", "content": CONVERSATION_SYSTEM_PROMPT},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                ],
-                temperature=0.3,
+            return clean_response_text(
+                await llm.complete(
+                    [
+                        {"role": "system", "content": CONVERSATION_SYSTEM_PROMPT},
+                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                    ],
+                    temperature=0.3,
+                )
             )
         except LLMUnavailableError:
             logger.info("LLM 미설정으로 일반 대화 템플릿을 사용합니다.")
@@ -231,8 +291,7 @@ def compose_scored_template(scored: list[dict]) -> str:
 
 def compose_youth_policy_response(items: list[dict]) -> str:
     lines = [
-        "현재 조건을 기준으로 확인해볼 만한 청년지원사업을 정리했어요.",
-        "온통청년 공식 API 조회 결과입니다.",
+        "현재 조건에서 확인해볼 만한 청년지원사업을 찾았어요. 우선 세 가지를 살펴볼게요.",
     ]
     for idx, item in enumerate(items[:3], start=1):
         lines.append("")
@@ -243,9 +302,25 @@ def compose_youth_policy_response(items: list[dict]) -> str:
             lines.append(f"   - 지역: {item['region']}")
         lines.append(f"   - 지원 대상: {item.get('target_summary') or '공식 공고 확인 필요'}")
         lines.append(f"   - 지원 내용: {item.get('support_summary') or '공식 공고 확인 필요'}")
-        lines.append(f"   - 신청 기간: {item.get('application_period') or '공식 공고 확인 필요'}")
-        lines.append(f"   - 신청 방법: {item.get('application_method') or '공식 공고 확인 필요'}")
-        lines.append(f"   - 원문 링크: {item.get('detail_url') or '공식 사이트 확인 필요'}")
+        if item.get("business_period"):
+            lines.append(f"   - 사업 기간: {item['business_period']}")
+        if item.get("application_period"):
+            lines.append(f"   - 신청 기간: {item['application_period']}")
+        if item.get("application_method"):
+            lines.append(f"   - 신청 방법: {item['application_method']}")
+        if item.get("detail_url"):
+            lines.append(f"   - 상세 링크: {item['detail_url']}")
+        missing = [
+            label
+            for key, label in (
+                ("application_period", "신청 기간"),
+                ("application_method", "신청 방법"),
+                ("detail_url", "상세 링크"),
+            )
+            if not item.get(key)
+        ]
+        if missing:
+            lines.append(f"   - 온통청년 API에 {'·'.join(missing)} 정보가 등록되어 있지 않아요.")
         if item.get("fallback_reason"):
             lines.append(f"   - 데이터 안내: {item['fallback_reason']}")
     lines.append("")

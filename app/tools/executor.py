@@ -45,7 +45,7 @@ class YouthPolicySearchTool:
     """온통청년 청년정책 또는 내부 fallback 정책을 검색한다."""
 
     name = "youth_policy_search"
-    description = "청년지원사업/취업지원정책을 검색한다. 온통청년 키가 없으면 내부 정책 데이터로 폴백한다."
+    description = "일자리·주거·교육·금융·복지·문화·참여 분야의 청년정책을 온통청년에서 검색한다."
 
     def __init__(self, repository: YouthCenterRepository) -> None:
         self._repository = repository

@@ -16,6 +16,7 @@ class UserProfile(BaseModel):
     is_entrepreneur: bool | None = None
     has_registered_business: bool | None = None
     interest_fields: list[str] = Field(default_factory=list)
+    policy_topic: str | None = None
 
 
 class ChatRequest(BaseModel):

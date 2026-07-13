@@ -14,6 +14,8 @@ from app.core.config import get_settings
 from app.schemas.chat import ChatRequest
 
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 

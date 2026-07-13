@@ -31,6 +31,7 @@ from app.graph.fallbacks import (
 )
 from app.graph.fallbacks import routing_plan as _fallback_routing_plan
 from app.graph.response_composer import (
+    clean_response_text,
     compose_clarification_reply,
     compose_conversation_reply,
     compose_grounded_results,
@@ -54,7 +55,7 @@ from app.graph.state import AgentState
 from app.repositories.policy import PolicyRepository
 from app.repositories.work24_recruitment import Work24RecruitmentRepository
 from app.repositories.work24_training import Work24TrainingRepository
-from app.repositories.youthcenter import YouthCenterRepository
+from app.repositories.youthcenter import YouthCenterRepository, is_generic_youth_policy_query
 from app.tools.executor import (
     PolicySearchTool,
     RecruitmentInfoTool,
@@ -119,7 +120,9 @@ async def router_node(state: AgentState) -> dict[str, Any]:
                 action = "SEARCH"
                 response_mode = pending.get("response_mode", response_mode)
                 request_kind = pending.get("request_kind", request_kind)
-                search_query = pending.get("search_query") or search_query
+                search_query = search_query or pending.get("search_query")
+            if request_kind == "youth_policy" and is_generic_youth_policy_query(user_input):
+                search_query = None
             routing_source = "llm"
         except LLMUnavailableError:
             logger.info("LLM 미설정으로 라우터 휴리스틱을 사용합니다.")
@@ -146,7 +149,7 @@ async def router_node(state: AgentState) -> dict[str, Any]:
                 "explain": "EXPLAIN",
             }.get(response_mode, intent)
             request_kind = pending.get("request_kind", request_kind)
-            search_query = pending.get("search_query") or search_query
+            search_query = search_query or pending.get("search_query")
             resumed_pending = True
 
     logger.info(
@@ -203,7 +206,13 @@ async def profile_extractor_node(state: AgentState) -> dict[str, Any]:
     if not extracted:
         extracted = _heuristic_extract_profile(user_input)
 
+    broad_policy_request = is_generic_youth_policy_query(user_input)
+    if broad_policy_request:
+        extracted.pop("policy_topic", None)
+
     merged = {**previous_profile}
+    if broad_policy_request:
+        merged.pop("policy_topic", None)
     for key, value in extracted.items():
         if value in (None, "", []):
             continue
@@ -252,14 +261,19 @@ async def missing_slot_node(state: AgentState) -> dict[str, Any]:
             missing.append("region")
         if profile.get("age") is None:
             missing.append("age")
-        if profile.get("employment_status") is None and profile.get("is_entrepreneur") is None:
-            missing.append("status")
+        policy_topic = profile.get("policy_topic")
+        has_specific_query = bool(
+            state.get("search_query") and not is_generic_youth_policy_query(state.get("search_query"))
+        )
         if (
-            not state.get("search_query")
+            not policy_topic
+            and not has_specific_query
             and not profile.get("preferred_support_type")
             and not profile.get("interest_fields")
         ):
             missing.append("policy_topic")
+        if policy_topic == "일자리" and profile.get("employment_status") is None:
+            missing.append("employment_status")
 
     return {"missing_slots": missing}
 
@@ -276,6 +290,12 @@ async def clarification_node(state: AgentState) -> dict[str, Any]:
             "response_mode": state.get("response_mode", "recommend"),
             "search_query": state.get("search_query"),
         }
+    next_query = state.get("search_query")
+    policy_topic = (state.get("profile") or {}).get("policy_topic")
+    if policy_topic and is_generic_youth_policy_query(next_query):
+        next_query = policy_topic
+    if next_query:
+        pending["search_query"] = next_query
     question = await compose_clarification_reply(
         _llm,
         original_request=pending.get("original_request") or state.get("user_input", ""),
@@ -303,7 +323,19 @@ async def policy_search_node(state: AgentState) -> dict[str, Any]:
     profile = state.get("profile") or {}
     request_kind = state.get("request_kind") or profile.get("request_kind") or "youth_policy"
     pending = state.get("pending_request") or {}
-    planned_query = state.get("search_query") or pending.get("search_query")
+    state_query = state.get("search_query")
+    pending_query = pending.get("search_query")
+    if request_kind == "youth_policy":
+        if state_query and not is_generic_youth_policy_query(state_query):
+            planned_query = state_query
+        elif profile.get("policy_topic"):
+            planned_query = profile["policy_topic"]
+        elif pending_query and not is_generic_youth_policy_query(pending_query):
+            planned_query = pending_query
+        else:
+            planned_query = state_query or pending_query
+    else:
+        planned_query = state_query or pending_query
     original_request = pending.get("original_request") or state["user_input"]
     search_context = {
         "original_request": original_request,
@@ -367,7 +399,9 @@ async def policy_search_node(state: AgentState) -> dict[str, Any]:
         age=profile.get("age"),
         employment_status=profile.get("employment_status"),
         graduation_status=profile.get("graduation_status"),
-        support_types=[profile["preferred_support_type"]] if profile.get("preferred_support_type") else [],
+        support_types=[
+            value for value in (profile.get("policy_topic"), profile.get("preferred_support_type")) if value
+        ],
         interest_fields=profile.get("interest_fields", []),
         keywords=planned_query or original_request,
     )
@@ -507,11 +541,15 @@ _FORBIDDEN_PATTERNS = [
     (re.compile(r"100\s*%\s*(확실|가능)"), "가능성이 높지만 추가 확인이 필요"),
 ]
 
-_DISCLAIMER = "\n\n※ 최종 자격 및 신청 가능 여부는 공식 공고문 또는 담당 기관을 통해 꼭 확인해주세요."
+_DISCLAIMER = "\n\n최종 신청 가능 여부는 공식 공고나 담당 기관에서 한 번 더 확인해 주세요."
+_GENERATED_DISCLAIMER = re.compile(
+    r"(?m)^\s*(?:[-•]\s*)?(?:※\s*)?(?:모든\s*정책\s*)?(?:최종\s*)?자격.*"
+    r"(?:공식\s*공고|담당\s*기관).*$"
+)
 
 
 async def guardrail_node(state: AgentState) -> dict[str, Any]:
-    text = state.get("final_response", "")
+    text = clean_response_text(state.get("final_response", ""))
     notes: list[str] = []
 
     for pattern, replacement in _FORBIDDEN_PATTERNS:
@@ -522,8 +560,9 @@ async def guardrail_node(state: AgentState) -> dict[str, Any]:
     has_grounded_results = any(
         state.get(key) for key in ("scored_results", "youth_policy_results", "training_results", "recruitment_results")
     )
-    if has_grounded_results and _DISCLAIMER.strip() not in text:
-        text = text + _DISCLAIMER
+    if has_grounded_results:
+        text = clean_response_text(_GENERATED_DISCLAIMER.sub("", text))
+        text = text.rstrip() + _DISCLAIMER
 
     history = list(state.get("conversation_history") or [])
     history.extend(

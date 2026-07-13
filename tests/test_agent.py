@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from app.graph import edges, nodes
+from app.graph.response_composer import _compact_candidates, clean_response_text, compose_youth_policy_response
 from app.graph.scoring import deadline_status, score_policy
 from app.repositories.policy import _normalize_bizinfo_item, _normalize_bizinfo_items
 
@@ -33,6 +34,57 @@ def test_heuristic_route_out_of_scope():
 
 def test_heuristic_route_general():
     assert nodes._heuristic_route("안녕하세요") == "GENERAL"
+
+
+def test_clean_response_text_removes_markdown_formal_intro_and_internal_fields():
+    text = (
+        '### 답변\n사용자님의 질문("청년 지원 정책 정보 요청")에 따라, 서울 정책 후보를 추천합니다.\n'
+        "### 추천 정책\n1. **서울 정책**\n- `application_period`와 `detail_url` 확인 필요"
+    )
+
+    cleaned = clean_response_text(text)
+
+    assert "###" not in cleaned
+    assert "**" not in cleaned
+    assert "`" not in cleaned
+    assert "사용자님의 질문" not in cleaned
+    assert "application_period" not in cleaned
+    assert "detail_url" not in cleaned
+
+
+def test_youth_policy_template_groups_truly_missing_application_fields():
+    response = compose_youth_policy_response(
+        [
+            {
+                "title": "서울 청년정책",
+                "business_period": "2026-01-01 ~ 2026-12-31",
+                "target_summary": "서울 거주 청년",
+                "support_summary": "상담 지원",
+            }
+        ]
+    )
+
+    assert "사업 기간: 2026-01-01 ~ 2026-12-31" in response
+    assert "신청 기간·신청 방법·상세 링크 정보가 등록되어 있지 않아요" in response
+    assert "application_period" not in response
+
+
+def test_compact_youth_candidates_expose_only_actual_missing_information():
+    compact = _compact_candidates(
+        [
+            {
+                "source": "youthcenter",
+                "title": "서울 청년정책",
+                "application_period": None,
+                "application_method": "온라인 신청",
+                "detail_url": None,
+            }
+        ]
+    )[0]
+
+    assert "application_period" not in compact
+    assert compact["application_method"] == "온라인 신청"
+    assert compact["data_notice"] == "온통청년 API에 신청 기간·상세 링크 정보가 등록되어 있지 않아요."
 
 
 async def test_router_uses_llm_semantics_without_keyword_override(monkeypatch):
@@ -76,6 +128,31 @@ async def test_router_returns_validated_llm_search_query(monkeypatch):
 
     assert result["request_kind"] == "training"
     assert result["search_query"] == "클라우드 엔지니어"
+
+
+async def test_router_discards_inferred_job_query_for_broad_youth_policy_request(monkeypatch):
+    llm = StubLLM(
+        '{"action":"SEARCH","response_mode":"recommend","request_kind":"youth_policy","search_query":"일자리"}'
+    )
+    monkeypatch.setattr(nodes, "_llm", llm)
+
+    result = await nodes.router_node({"user_input": "청년 지원 정책에 대한 정보를 얻고 싶어"})
+
+    assert result["search_query"] is None
+
+
+async def test_profile_extractor_discards_inferred_job_topic_for_broad_policy_request(monkeypatch):
+    monkeypatch.setattr(nodes, "_llm", StubLLM('{"policy_topic":"일자리"}'))
+
+    result = await nodes.profile_extractor_node(
+        {
+            "user_input": "청년 지원 정책에 대한 정보를 얻고 싶어",
+            "request_kind": "youth_policy",
+            "profile": {},
+        }
+    )
+
+    assert "policy_topic" not in result["profile"]
 
 
 async def test_conversation_node_uses_llm_for_general_response(monkeypatch):
@@ -131,6 +208,12 @@ def test_heuristic_extract_profile_entrepreneur():
     assert "IT" in profile["interest_fields"]
 
 
+def test_heuristic_extract_profile_recognizes_official_youth_policy_topics():
+    assert nodes._heuristic_extract_profile("월세와 주거비 지원이 필요해")["policy_topic"] == "주거"
+    assert nodes._heuristic_extract_profile("문화생활 지원 정책을 찾아줘")["policy_topic"] == "금융·복지·문화"
+    assert nodes._heuristic_extract_profile("청년 참여 활동을 하고 싶어")["policy_topic"] == "참여·기반"
+
+
 async def test_missing_slot_node_flags_missing_region():
     state = {"profile": {"employment_status": "unemployed_seeking_job"}}
     result = await nodes.missing_slot_node(state)
@@ -145,6 +228,28 @@ async def test_missing_slot_node_no_missing_when_complete():
     }
     result = await nodes.missing_slot_node(state)
     assert result["missing_slots"] == []
+
+
+async def test_housing_policy_does_not_require_employment_or_entrepreneur_status():
+    result = await nodes.missing_slot_node(
+        {
+            "request_kind": "youth_policy",
+            "profile": {"region": "서울", "age": 24, "policy_topic": "주거"},
+        }
+    )
+
+    assert result["missing_slots"] == []
+
+
+async def test_job_policy_requires_employment_status_but_not_entrepreneur_status():
+    result = await nodes.missing_slot_node(
+        {
+            "request_kind": "youth_policy",
+            "profile": {"region": "서울", "age": 24, "policy_topic": "일자리"},
+        }
+    )
+
+    assert result["missing_slots"] == ["employment_status"]
 
 
 async def test_router_resumes_pending_search_from_clarification_answer(monkeypatch):
@@ -363,8 +468,26 @@ async def test_guardrail_node_softens_absolute_language_and_adds_disclaimer():
     result = await nodes.guardrail_node(state)
 
     assert "반드시" not in result["final_response"] or "신청 가능성이 높아요" in result["final_response"]
-    assert "확인해주세요" in result["final_response"]
+    assert "확인해 주세요" in result["final_response"]
     assert result["guardrail_notes"]
+
+
+async def test_guardrail_removes_generated_duplicate_and_unsupported_missing_info():
+    state = {
+        "final_response": (
+            "추천 정책\n1. 서울 청년정책\n\n안내 사항:\n"
+            "- 최종 자격 요건 및 신청 가능 여부는 공식 공고 확인이 필요합니다.\n"
+            "- 누락된 신청 정보(예: 전화번호, 기관명)는 공식 링크를 참고하세요."
+        ),
+        "youth_policy_results": [{"title": "서울 청년정책"}],
+    }
+
+    result = await nodes.guardrail_node(state)
+
+    assert "추천 정책" not in result["final_response"]
+    assert "안내 사항" not in result["final_response"]
+    assert "누락된 신청 정보" not in result["final_response"]
+    assert result["final_response"].count("최종 신청 가능 여부") == 1
 
 
 def test_normalize_bizinfo_item_handles_empty_optional_fields():

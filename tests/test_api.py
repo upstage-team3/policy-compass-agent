@@ -159,7 +159,8 @@ def test_chat_resumes_original_policy_request_after_slot_answer(client):
         "/api/chat",
         json={"session_id": session_id, "message": "거주지원을 받고 싶은데 관련 정책 있어?"},
     ).json()
-    assert {"region", "age", "status"}.issubset(first["missing_slots"])
+    assert {"region", "age"}.issubset(first["missing_slots"])
+    assert "status" not in first["missing_slots"]
 
     second = client.post(
         "/api/chat",
@@ -169,3 +170,31 @@ def test_chat_resumes_original_policy_request_after_slot_answer(client):
     assert second["missing_slots"] == []
     assert second["profile"]["region"] == "서울"
     assert "입력하신 조건에 맞는 지원사업" not in second["reply"]
+
+
+def test_chat_broad_policy_request_then_housing_topic_never_requires_job_or_startup_status(client):
+    session_id = str(uuid.uuid4())
+    first = client.post(
+        "/api/chat",
+        json={"session_id": session_id, "message": "청년 지원 정책에 대한 정보를 얻고 싶어"},
+    ).json()
+
+    assert {"region", "age", "policy_topic"}.issubset(first["missing_slots"])
+    assert "status" not in first["missing_slots"]
+
+    second = client.post(
+        "/api/chat",
+        json={"session_id": session_id, "message": "서울 만 24세"},
+    ).json()
+
+    assert second["missing_slots"] == ["policy_topic"]
+    assert "취업 준비" not in second["reply"]
+    assert "창업" not in second["reply"]
+
+    third = client.post(
+        "/api/chat",
+        json={"session_id": session_id, "message": "거주지원 정책 정보를 원해"},
+    ).json()
+
+    assert third["missing_slots"] == []
+    assert third["profile"]["policy_topic"] == "주거"
