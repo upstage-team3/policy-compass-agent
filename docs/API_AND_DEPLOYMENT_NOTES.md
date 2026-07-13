@@ -46,8 +46,9 @@ curl -X POST http://localhost:8000/api/chat \
 
 ## Supabase 대화 메모리
 
-`data/chat_memory_schema.sql`을 Supabase SQL Editor에서 실행한다. 다음 데이터만
-현재 문맥으로 다시 불러온다.
+`data/supabase_schema.sql`을 Supabase SQL Editor에서 실행한다. 이 파일이
+대화 메모리, 훈련과정 캐시, 향후 RAG 테이블을 포함하는 단일 기준 스키마다.
+대화 메모리는 다음 데이터만 현재 문맥으로 다시 불러온다.
 
 - 최근 사용자/Assistant 메시지 8개
 - 지역, 나이, 정책 분야, 필요한 경우의 취업·창업 상태 등 구조화 프로필
@@ -57,7 +58,7 @@ curl -X POST http://localhost:8000/api/chat \
 Supabase 조회 2건과 저장 2건은 각각 병렬 처리하며 요청 timeout은 3초다.
 DB가 없거나 실패해도 채팅 그래프는 인프로세스 `MemorySaver`로 계속 동작한다.
 
-`chat_logs`, `chat_sessions`는 RLS가 켜져 있고 클라이언트 정책은 만들지 않는다.
+전체 테이블은 RLS가 켜져 있고 클라이언트 정책은 만들지 않는다.
 따라서 `SUPABASE_KEY`에는 publishable/anon 키가 아니라 백엔드 전용
 secret/service_role 키를 설정해야 한다. 키 이름은 통일성을 위해
 `SUPABASE_KEY`를 사용하지만 권한은 반드시 서버용이어야 한다.

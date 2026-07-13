@@ -91,7 +91,8 @@ Router의 정상 출력 예시:
 | `app/tools/executor.py` | Repository 예외를 안전하게 처리하는 Tool 경계 |
 | `app/repositories/` | 외부 API 호출과 응답 정규화 |
 | `app/repositories/chat_memory.py` | Supabase 최근 대화·프로필·미완료 요청 저장/복원 |
-| `data/chat_memory_schema.sql` | RLS가 적용된 대화 메모리 전용 스키마 |
+| `data/supabase_schema.sql` | 대화·훈련 캐시·RAG 테이블과 RLS를 포함하는 통합 기준 스키마 |
+| `data/chat_memory_schema.sql` | 대화 메모리만 설치할 때 쓰는 최소 스키마 |
 
 `nodes.py`에서 보이는 `_heuristic_*`와 `_extract_training_search_keyword`는 호환용 import다. 실제 규칙은 모두 `fallbacks.py`에 있고 다음 경우에만 사용한다.
 

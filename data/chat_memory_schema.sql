@@ -1,5 +1,6 @@
 -- 정책나침반 대화 메모리 전용 스키마
 -- Supabase SQL Editor에서 이 파일만 실행해도 멀티턴 메모리를 사용할 수 있다.
+-- 전체 서비스 스키마는 data/supabase_schema.sql을 단일 기준으로 사용한다.
 
 create table if not exists chat_logs (
     id bigint generated always as identity primary key,

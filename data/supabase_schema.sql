@@ -1,4 +1,6 @@
 -- 정책나침반 Supabase 스키마
+-- Supabase SQL Editor에서 반복 실행해도 기존 데이터는 유지되도록 작성한다.
+-- chat_memory_schema.sql의 대화 테이블과 training_courses 캐시를 포함하는 단일 기준 파일이다.
 -- 현재 앱은 기업마당/온통청년/고용24 API를 매 요청마다 라이브로 호출하며
 -- 로컬 캐시가 없다. 아래 테이블은 API 장애·키 미설정 시 fallback으로 쓸
 -- 캐시 데이터(주기적 배치 인제스트로 채워짐)와, 향후 pgvector 기반 RAG
@@ -103,6 +105,10 @@ create table if not exists chat_sessions (
 
 create index if not exists chat_sessions_updated_at_idx on chat_sessions (updated_at desc);
 
--- 대화 내용은 백엔드의 service role 키로만 접근한다.
+-- 모든 테이블은 백엔드의 secret/service_role 키로만 접근한다.
+-- 현재 프런트엔드는 Supabase에 직접 연결하지 않고 FastAPI만 호출한다.
+alter table policies enable row level security;
+alter table policy_embeddings enable row level security;
+alter table training_courses enable row level security;
 alter table chat_logs enable row level security;
 alter table chat_sessions enable row level security;

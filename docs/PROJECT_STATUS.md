@@ -80,7 +80,8 @@ Supabase Memory Load
 | `app/repositories/work24_recruitment.py` | 고용24 채용 보조 API |
 | `app/repositories/policy.py` | 기업마당 API |
 | `app/api/routes/chat.py` | 동기 채팅과 SSE API |
-| `data/chat_memory_schema.sql` | 대화 메모리 테이블과 RLS 스키마 |
+| `data/supabase_schema.sql` | 대화·훈련 캐시·RAG 테이블과 RLS를 포함하는 통합 기준 스키마 |
+| `data/chat_memory_schema.sql` | 대화 메모리만 설치할 때 쓰는 최소 스키마 |
 
 ## 남은 주요 위험
 

@@ -100,8 +100,8 @@ app/
 ├── static/             # 최소 채팅 UI (정적 HTML/JS)
 └── main.py             # FastAPI 앱 엔트리포인트
 data/
-├── chat_memory_schema.sql # 대화 메모리 전용 Supabase 스키마
-├── supabase_schema.sql # Supabase+pgvector RAG 확장 포함 전체 스키마
+├── chat_memory_schema.sql # 대화 메모리만 설치할 때 쓰는 최소 스키마
+├── supabase_schema.sql # 대화·훈련 캐시·pgvector를 포함하는 통합 기준 스키마
 └── scripts/            # 기업마당 데이터 적재 / RAG 임베딩 적재 스크립트
 tests/                  # pytest 기반 유닛/API 테스트
 docs/DEVELOPMENT_HANDOFF.md # 다음 개발 세션의 현재 기준 문서
@@ -120,8 +120,10 @@ cp .env.example .env
 데모용 대체 정책 데이터 fallback을 사용하지 않으므로, 외부 API 키가 없거나 권한이
 제한된 데이터 소스는 빈 결과 또는 안내 fallback으로 드러납니다.
 
-대화 문맥을 재시작 뒤에도 유지하려면 `data/chat_memory_schema.sql`을 Supabase
-SQL Editor에서 실행하고 `SUPABASE_URL`, `SUPABASE_KEY`를 설정합니다.
+전체 Supabase 기능을 사용하려면 `data/supabase_schema.sql`을 Supabase SQL
+Editor에서 실행하고 `SUPABASE_URL`, `SUPABASE_KEY`를 설정합니다. 이 SQL은
+반복 실행해도 기존 대화 데이터를 삭제하지 않고 없는 테이블과 인덱스만 추가합니다.
+대화 메모리만 설치하는 경우에만 `data/chat_memory_schema.sql`을 사용합니다.
 `SUPABASE_KEY`에는 publishable/anon 키가 아니라 서버 전용 secret/service_role
 키만 사용해야 합니다.
 
