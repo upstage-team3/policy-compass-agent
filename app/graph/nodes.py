@@ -15,12 +15,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.core.llm import LLMUnavailableError, SolarLLMClient, extract_json
-from app.core.prompts import (
-    MISSING_SLOT_LABELS,
-    OUT_OF_SCOPE_REPLY,
-    PROFILE_EXTRACTION_SYSTEM_PROMPT,
-    ROUTER_SYSTEM_PROMPT,
-)
+from app.core.prompts import OUT_OF_SCOPE_REPLY, PROFILE_EXTRACTION_SYSTEM_PROMPT, ROUTER_SYSTEM_PROMPT
 from app.graph.contracts import VALID_REQUEST_KINDS, RoutingDecision
 from app.graph.fallbacks import (
     classify_request_kind as _classify_request_kind,
@@ -36,8 +31,11 @@ from app.graph.fallbacks import (
 )
 from app.graph.fallbacks import routing_plan as _fallback_routing_plan
 from app.graph.response_composer import (
+    clean_response_text,
+    compose_clarification_reply,
     compose_conversation_reply,
     compose_grounded_results,
+    compose_no_results_reply,
     compose_scored_results,
 )
 from app.graph.response_composer import (
@@ -57,7 +55,7 @@ from app.graph.state import AgentState
 from app.repositories.policy import PolicyRepository
 from app.repositories.work24_recruitment import Work24RecruitmentRepository
 from app.repositories.work24_training import Work24TrainingRepository
-from app.repositories.youthcenter import YouthCenterRepository
+from app.repositories.youthcenter import YouthCenterRepository, is_generic_youth_policy_query
 from app.tools.executor import (
     PolicySearchTool,
     RecruitmentInfoTool,
@@ -87,18 +85,22 @@ _recruitment_tool = RecruitmentInfoTool(Work24RecruitmentRepository())
 
 async def router_node(state: AgentState) -> dict[str, Any]:
     user_input = state["user_input"]
+    pending = state.get("pending_request") or {}
     action = None
     response_mode = None
     intent = None
     request_kind = None
     search_query = None
     routing_source = "heuristic"
+    resumed_pending = False
 
     if _llm.is_configured:
         try:
             routing_context = {
                 "message": user_input,
                 "known_profile": state.get("profile") or {},
+                "recent_history": (state.get("conversation_history") or [])[-6:],
+                "pending_request": pending,
             }
             raw = await _llm.complete(
                 [
@@ -113,6 +115,14 @@ async def router_node(state: AgentState) -> dict[str, Any]:
             intent = decision.intent.value
             request_kind = decision.request_kind.value
             search_query = decision.search_query
+            resumed_pending = decision.resume_pending and bool(pending)
+            if resumed_pending:
+                action = "SEARCH"
+                response_mode = pending.get("response_mode", response_mode)
+                request_kind = pending.get("request_kind", request_kind)
+                search_query = search_query or pending.get("search_query")
+            if request_kind == "youth_policy" and is_generic_youth_policy_query(user_input):
+                search_query = None
             routing_source = "llm"
         except LLMUnavailableError:
             logger.info("LLM 미설정으로 라우터 휴리스틱을 사용합니다.")
@@ -129,6 +139,18 @@ async def router_node(state: AgentState) -> dict[str, Any]:
         request_kind = fallback["request_kind"]
         search_query = fallback["search_query"]
         routing_source = "heuristic"
+        should_resume_general_answer = action == "RESPOND" and response_mode == "general"
+        if pending and (should_resume_general_answer or request_kind == pending.get("request_kind")):
+            action = "SEARCH"
+            response_mode = pending.get("response_mode", response_mode)
+            intent = {
+                "recommend": "RECOMMEND",
+                "eligibility": "ELIGIBILITY_CHECK",
+                "explain": "EXPLAIN",
+            }.get(response_mode, intent)
+            request_kind = pending.get("request_kind", request_kind)
+            search_query = search_query or pending.get("search_query")
+            resumed_pending = True
 
     logger.info(
         "routing_decision source=%s action=%s mode=%s request_kind=%s has_search_query=%s",
@@ -146,6 +168,7 @@ async def router_node(state: AgentState) -> dict[str, Any]:
         "request_kind": request_kind,
         "search_query": search_query,
         "routing_source": routing_source,
+        "resumed_pending": resumed_pending,
     }
 
 
@@ -161,10 +184,16 @@ async def profile_extractor_node(state: AgentState) -> dict[str, Any]:
     extracted: dict[str, Any] = {}
     if _llm.is_configured:
         try:
+            extraction_context = {
+                "message": user_input,
+                "known_profile": previous_profile,
+                "recent_history": (state.get("conversation_history") or [])[-6:],
+                "pending_request": state.get("pending_request") or {},
+            }
             raw = await _llm.complete(
                 [
                     {"role": "system", "content": PROFILE_EXTRACTION_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_input},
+                    {"role": "user", "content": json.dumps(extraction_context, ensure_ascii=False)},
                 ],
                 response_format_json=True,
             )
@@ -177,14 +206,17 @@ async def profile_extractor_node(state: AgentState) -> dict[str, Any]:
     if not extracted:
         extracted = _heuristic_extract_profile(user_input)
 
+    broad_policy_request = is_generic_youth_policy_query(user_input)
+    if broad_policy_request:
+        extracted.pop("policy_topic", None)
+
     merged = {**previous_profile}
+    if broad_policy_request:
+        merged.pop("policy_topic", None)
     for key, value in extracted.items():
         if value in (None, "", []):
             continue
-        if key == "interest_fields":
-            merged[key] = sorted(set(merged.get("interest_fields", []) + list(value)))
-        else:
-            merged[key] = value
+        merged[key] = value
 
     request_kind = state.get("request_kind")
     if request_kind not in VALID_REQUEST_KINDS or request_kind == "general":
@@ -213,23 +245,73 @@ async def missing_slot_node(state: AgentState) -> dict[str, Any]:
         if not profile.get("region"):
             missing.append("training_region")
     elif request_kind == "recruitment":
-        # 채용정보목록/상세는 개인키 제한 안내가 핵심이므로, 조건이 부족해도
-        # 먼저 탐색 가이드를 제공하고 이후 직무/지역을 보완하도록 한다.
-        missing = []
+        if not state.get("search_query") and not profile.get("desired_job") and not profile.get("interest_fields"):
+            missing.append("desired_job")
+        if not profile.get("region"):
+            missing.append("work_region")
+    elif request_kind == "business":
+        if not profile.get("region"):
+            missing.append("region")
+        if profile.get("is_entrepreneur") is None:
+            missing.append("business_status")
+        elif profile.get("is_entrepreneur") and profile.get("has_registered_business") is None:
+            missing.append("business_registration")
     else:
         if not profile.get("region"):
             missing.append("region")
-        if profile.get("employment_status") is None and profile.get("is_entrepreneur") is None:
-            missing.append("status")
+        if profile.get("age") is None:
+            missing.append("age")
+        policy_topic = profile.get("policy_topic")
+        has_specific_query = bool(
+            state.get("search_query") and not is_generic_youth_policy_query(state.get("search_query"))
+        )
+        if (
+            not policy_topic
+            and not has_specific_query
+            and not profile.get("preferred_support_type")
+            and not profile.get("interest_fields")
+        ):
+            missing.append("policy_topic")
+        if policy_topic == "일자리" and profile.get("employment_status") is None:
+            missing.append("employment_status")
 
     return {"missing_slots": missing}
 
 
 async def clarification_node(state: AgentState) -> dict[str, Any]:
     missing = state.get("missing_slots", [])
-    labels = [MISSING_SLOT_LABELS.get(slot, slot) for slot in missing]
-    question = "맞춤 추천을 위해 몇 가지만 더 확인할게요! " + ", ".join(labels) + " 알려주시겠어요?"
-    return {"final_response": question, "search_results": [], "scored_results": []}
+    existing = state.get("pending_request") or {}
+    if state.get("resumed_pending") and existing:
+        pending = dict(existing)
+    else:
+        pending = {
+            "original_request": state.get("user_input", ""),
+            "request_kind": state.get("request_kind", "youth_policy"),
+            "response_mode": state.get("response_mode", "recommend"),
+            "search_query": state.get("search_query"),
+        }
+    next_query = state.get("search_query")
+    policy_topic = (state.get("profile") or {}).get("policy_topic")
+    if policy_topic and is_generic_youth_policy_query(next_query):
+        next_query = policy_topic
+    if next_query:
+        pending["search_query"] = next_query
+    question = await compose_clarification_reply(
+        _llm,
+        original_request=pending.get("original_request") or state.get("user_input", ""),
+        profile=state.get("profile") or {},
+        missing_slots=missing,
+        history=state.get("conversation_history") or [],
+    )
+    return {
+        "final_response": question,
+        "pending_request": pending,
+        "search_results": [],
+        "youth_policy_results": [],
+        "training_results": [],
+        "recruitment_results": [],
+        "scored_results": [],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +322,26 @@ async def clarification_node(state: AgentState) -> dict[str, Any]:
 async def policy_search_node(state: AgentState) -> dict[str, Any]:
     profile = state.get("profile") or {}
     request_kind = state.get("request_kind") or profile.get("request_kind") or "youth_policy"
-    planned_query = state.get("search_query")
+    pending = state.get("pending_request") or {}
+    state_query = state.get("search_query")
+    pending_query = pending.get("search_query")
+    if request_kind == "youth_policy":
+        if state_query and not is_generic_youth_policy_query(state_query):
+            planned_query = state_query
+        elif profile.get("policy_topic"):
+            planned_query = profile["policy_topic"]
+        elif pending_query and not is_generic_youth_policy_query(pending_query):
+            planned_query = pending_query
+        else:
+            planned_query = state_query or pending_query
+    else:
+        planned_query = state_query or pending_query
+    original_request = pending.get("original_request") or state["user_input"]
+    search_context = {
+        "original_request": original_request,
+        "search_query": planned_query,
+        "request_kind": request_kind,
+    }
 
     if request_kind == "training":
         desired_job = (
@@ -253,7 +354,7 @@ async def policy_search_node(state: AgentState) -> dict[str, Any]:
         training_input = TrainingCourseSearchInput(
             desired_job=desired_job,
             training_region=profile.get("region"),
-            keywords=state["user_input"],
+            keywords=original_request,
         )
         results = await _training_tool.execute(training_input)
         return {
@@ -261,13 +362,15 @@ async def policy_search_node(state: AgentState) -> dict[str, Any]:
             "youth_policy_results": [],
             "training_results": [item.model_dump() for item in results],
             "recruitment_results": [],
+            "pending_request": {},
+            "search_context": search_context,
         }
 
     if request_kind == "recruitment":
         recruitment_input = RecruitmentInfoSearchInput(
             desired_job=planned_query or profile.get("desired_job"),
             preferred_work_region=profile.get("region"),
-            keywords=planned_query or state["user_input"],
+            keywords=planned_query or original_request,
         )
         results = await _recruitment_tool.execute(recruitment_input)
         return {
@@ -275,6 +378,8 @@ async def policy_search_node(state: AgentState) -> dict[str, Any]:
             "youth_policy_results": [],
             "training_results": [],
             "recruitment_results": [item.model_dump() for item in results],
+            "pending_request": {},
+            "search_context": search_context,
         }
 
     search_input = PolicySearchInput(
@@ -287,16 +392,18 @@ async def policy_search_node(state: AgentState) -> dict[str, Any]:
         desired_job=profile.get("desired_job"),
         preferred_support_type=profile.get("preferred_support_type"),
         interest_fields=profile.get("interest_fields", []),
-        keywords=planned_query or state["user_input"],
+        keywords=planned_query or original_request,
     )
     youth_input = YouthPolicySearchInput(
         region=profile.get("region"),
         age=profile.get("age"),
         employment_status=profile.get("employment_status"),
         graduation_status=profile.get("graduation_status"),
-        support_types=[profile["preferred_support_type"]] if profile.get("preferred_support_type") else [],
+        support_types=[
+            value for value in (profile.get("policy_topic"), profile.get("preferred_support_type")) if value
+        ],
         interest_fields=profile.get("interest_fields", []),
-        keywords=planned_query or state["user_input"],
+        keywords=planned_query or original_request,
     )
     if request_kind == "business":
         results = await _search_tool.execute(search_input)
@@ -309,6 +416,8 @@ async def policy_search_node(state: AgentState) -> dict[str, Any]:
         "youth_policy_results": [item.model_dump() for item in youth_results],
         "training_results": [],
         "recruitment_results": [],
+        "pending_request": {},
+        "search_context": search_context,
     }
 
 
@@ -331,11 +440,13 @@ async def response_node(state: AgentState) -> dict[str, Any]:
     recruitment_items = state.get("recruitment_results", [])
     profile = state.get("profile") or {}
     response_mode = state.get("response_mode", "recommend")
+    search_context = state.get("search_context") or {}
+    original_request = search_context.get("original_request") or state["user_input"]
 
     if training_courses:
         generated = await compose_grounded_results(
             _llm,
-            user_input=state["user_input"],
+            user_input=original_request,
             profile=profile,
             source_type="work24_training",
             response_mode=response_mode,
@@ -348,7 +459,7 @@ async def response_node(state: AgentState) -> dict[str, Any]:
     if recruitment_items:
         generated = await compose_grounded_results(
             _llm,
-            user_input=state["user_input"],
+            user_input=original_request,
             profile=profile,
             source_type="work24_recruitment",
             response_mode=response_mode,
@@ -361,7 +472,7 @@ async def response_node(state: AgentState) -> dict[str, Any]:
     if youth_policies:
         generated = await compose_grounded_results(
             _llm,
-            user_input=state["user_input"],
+            user_input=original_request,
             profile=profile,
             source_type="youthcenter_policy",
             response_mode=response_mode,
@@ -372,17 +483,24 @@ async def response_node(state: AgentState) -> dict[str, Any]:
         return {"final_response": _compose_youth_policy_response(youth_policies)}
 
     if not scored:
-        if response_mode == "explain":
-            text = "공식 데이터에서 요청하신 항목을 찾지 못했어요. 정확한 명칭을 확인해 다시 질문해주세요."
-        else:
-            text = (
-                "입력하신 조건에 맞는 지원사업을 찾지 못했어요. 관심 분야나 지역을 조금 더 알려주시면 다시 찾아볼게요."
-            )
+        source_type = {
+            "youth_policy": "youthcenter_policy",
+            "training": "work24_training",
+            "recruitment": "work24_recruitment",
+            "business": "bizinfo",
+        }.get(state.get("request_kind"), "policy")
+        text = await compose_no_results_reply(
+            _llm,
+            user_input=original_request,
+            profile=profile,
+            source_type=source_type,
+            search_query=search_context.get("search_query"),
+        )
         return {"final_response": text}
 
     generated = await compose_scored_results(
         _llm,
-        user_input=state["user_input"],
+        user_input=original_request,
         response_mode=response_mode,
         profile=profile,
         scored=scored,
@@ -408,6 +526,7 @@ async def conversation_node(state: AgentState) -> dict[str, Any]:
             _llm,
             query=user_input,
             response_mode=response_mode,
+            history=state.get("conversation_history") or [],
         )
     }
 
@@ -422,11 +541,15 @@ _FORBIDDEN_PATTERNS = [
     (re.compile(r"100\s*%\s*(확실|가능)"), "가능성이 높지만 추가 확인이 필요"),
 ]
 
-_DISCLAIMER = "\n\n※ 최종 자격 및 신청 가능 여부는 공식 공고문 또는 담당 기관을 통해 꼭 확인해주세요."
+_DISCLAIMER = "\n\n최종 신청 가능 여부는 공식 공고나 담당 기관에서 한 번 더 확인해 주세요."
+_GENERATED_DISCLAIMER = re.compile(
+    r"(?m)^\s*(?:[-•]\s*)?(?:※\s*)?(?:모든\s*정책\s*)?(?:최종\s*)?자격.*"
+    r"(?:공식\s*공고|담당\s*기관).*$"
+)
 
 
 async def guardrail_node(state: AgentState) -> dict[str, Any]:
-    text = state.get("final_response", "")
+    text = clean_response_text(state.get("final_response", ""))
     notes: list[str] = []
 
     for pattern, replacement in _FORBIDDEN_PATTERNS:
@@ -437,7 +560,19 @@ async def guardrail_node(state: AgentState) -> dict[str, Any]:
     has_grounded_results = any(
         state.get(key) for key in ("scored_results", "youth_policy_results", "training_results", "recruitment_results")
     )
-    if has_grounded_results and _DISCLAIMER.strip() not in text:
-        text = text + _DISCLAIMER
+    if has_grounded_results:
+        text = clean_response_text(_GENERATED_DISCLAIMER.sub("", text))
+        text = text.rstrip() + _DISCLAIMER
 
-    return {"final_response": text, "guardrail_notes": notes}
+    history = list(state.get("conversation_history") or [])
+    history.extend(
+        [
+            {"role": "user", "content": state.get("user_input", "")},
+            {"role": "assistant", "content": text},
+        ]
+    )
+    return {
+        "final_response": text,
+        "guardrail_notes": notes,
+        "conversation_history": history[-8:],
+    }

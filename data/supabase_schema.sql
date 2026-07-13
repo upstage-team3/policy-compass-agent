@@ -41,8 +41,9 @@ create table if not exists policy_embeddings (
 );
 
 create index if not exists policy_embeddings_policy_id_idx on policy_embeddings (policy_id);
-create index if not exists policy_embeddings_embedding_idx
-    on policy_embeddings using hnsw (embedding vector_cosine_ops);
+-- pgvector의 vector HNSW 인덱스는 최대 2,000차원만 지원한다.
+-- Solar 4,096차원 임베딩은 우선 exact scan으로 유지하고, 실제 RAG 도입 시
+-- 차원 축소 또는 별도 검색 전략을 확정한 뒤 ANN 인덱스를 추가한다.
 
 -- 고용24 국민내일배움카드 훈련과정 캐시 (app/repositories/work24_training.py fallback용)
 -- start_date/end_date/cost/capacity는 원본 API가 항상 정형 포맷을 보장하지
@@ -90,3 +91,18 @@ create table if not exists chat_logs (
 );
 
 create index if not exists chat_logs_session_id_idx on chat_logs (session_id);
+
+-- 구조화된 멀티턴 상태. 전체 대화는 chat_logs에, 현재 검색 계획과 프로필만 여기에 보관한다.
+create table if not exists chat_sessions (
+    session_id text primary key,
+    profile jsonb not null default '{}'::jsonb,
+    pending_request jsonb not null default '{}'::jsonb,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+create index if not exists chat_sessions_updated_at_idx on chat_sessions (updated_at desc);
+
+-- 대화 내용은 백엔드의 service role 키로만 접근한다.
+alter table chat_logs enable row level security;
+alter table chat_sessions enable row level security;

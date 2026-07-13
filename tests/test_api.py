@@ -44,6 +44,12 @@ def test_chat_asks_for_missing_slots_first(client):
     assert body["recommendations"] == []
 
 
+def test_chat_rejects_unsafe_session_id(client):
+    res = client.post("/api/chat", json={"session_id": "../../another-session", "message": "안녕하세요"})
+
+    assert res.status_code == 422
+
+
 def test_chat_job_seeking_question_asks_region_before_recommending(client):
     session_id = str(uuid.uuid4())
     res = client.post(
@@ -58,7 +64,7 @@ def test_chat_job_seeking_question_asks_region_before_recommending(client):
 
 def test_chat_returns_no_recommendations_without_policy_source(client):
     session_id = str(uuid.uuid4())
-    message = "대학 졸업한지 6개월 됐고 서울에서 취업 준비 중인데 받을 수 있는 지원금 있어?"
+    message = "만 25세이고 대학 졸업한지 6개월 됐고 서울에서 취업 준비 중인데 받을 수 있는 지원금 있어?"
 
     res = client.post("/api/chat", json={"session_id": session_id, "message": message})
     assert res.status_code == 200
@@ -72,7 +78,7 @@ def test_chat_returns_no_recommendations_without_policy_source(client):
 def test_chat_persists_profile_across_turns(client):
     session_id = str(uuid.uuid4())
     client.post("/api/chat", json={"session_id": session_id, "message": "서울에 살고 취업 준비 중이야"})
-    res = client.post("/api/chat", json={"session_id": session_id, "message": "지원금 추천해줘"})
+    res = client.post("/api/chat", json={"session_id": session_id, "message": "만 25세고 지원금에 관심 있어"})
     body = res.json()
 
     assert body["profile"]["region"] == "서울"
@@ -142,5 +148,53 @@ def test_chat_recruitment_question_returns_permission_fallback(client):
     body = res.json()
 
     assert body["intent"] == "RECOMMEND"
-    assert "채용 탐색 가이드" in body["reply"]
-    assert "없는 채용공고를 만들어" in body["reply"]
+    assert "desired_job" not in body["reply"]
+    assert "관심 직무" in body["reply"]
+    assert "근무를 희망하는 지역" in body["reply"]
+
+
+def test_chat_resumes_original_policy_request_after_slot_answer(client):
+    session_id = str(uuid.uuid4())
+    first = client.post(
+        "/api/chat",
+        json={"session_id": session_id, "message": "거주지원을 받고 싶은데 관련 정책 있어?"},
+    ).json()
+    assert {"region", "age"}.issubset(first["missing_slots"])
+    assert "status" not in first["missing_slots"]
+
+    second = client.post(
+        "/api/chat",
+        json={"session_id": session_id, "message": "서울에 사는 만 25세 취업 준비생이야"},
+    ).json()
+
+    assert second["missing_slots"] == []
+    assert second["profile"]["region"] == "서울"
+    assert "입력하신 조건에 맞는 지원사업" not in second["reply"]
+
+
+def test_chat_broad_policy_request_then_housing_topic_never_requires_job_or_startup_status(client):
+    session_id = str(uuid.uuid4())
+    first = client.post(
+        "/api/chat",
+        json={"session_id": session_id, "message": "청년 지원 정책에 대한 정보를 얻고 싶어"},
+    ).json()
+
+    assert {"region", "age", "policy_topic"}.issubset(first["missing_slots"])
+    assert "status" not in first["missing_slots"]
+
+    second = client.post(
+        "/api/chat",
+        json={"session_id": session_id, "message": "서울 만 24세"},
+    ).json()
+
+    assert second["missing_slots"] == ["policy_topic"]
+    assert "취업 준비" not in second["reply"]
+    assert "창업" not in second["reply"]
+
+    third = client.post(
+        "/api/chat",
+        json={"session_id": session_id, "message": "거주지원 정책 정보를 원해"},
+    ).json()
+
+    assert third["missing_slots"] == []
+    assert third["profile"]["policy_topic"] == "주거"

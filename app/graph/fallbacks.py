@@ -70,10 +70,20 @@ INTEREST_KEYWORDS = {
     "농업": ["농업", "귀농"],
 }
 
+POLICY_TOPIC_KEYWORDS = {
+    "일자리": ["취업", "구직", "일자리", "일경험"],
+    "주거": ["주거", "거주지원", "월세", "전세", "임대", "주거비"],
+    "교육·직업·훈련": ["교육", "직업훈련", "역량", "자격증"],
+    "금융·복지·문화": ["금융", "자산", "복지", "생활", "문화", "건강"],
+    "참여·기반": ["참여", "권리", "청년활동", "커뮤니티"],
+}
+
 
 def classify_request_kind(text: str, profile: dict[str, Any] | None = None) -> str:
     profile = profile or {}
-    if any(keyword in text for keyword in TRAINING_KEYWORDS):
+    policy_request = any(keyword in text for keyword in ("정책", "지원사업", "청년지원"))
+    course_request = any(keyword in text for keyword in ("훈련", "내일배움", "국비", "과정", "수강", "강의"))
+    if any(keyword in text for keyword in TRAINING_KEYWORDS) and (course_request or not policy_request):
         return "training"
     if any(keyword in text for keyword in RECRUITMENT_KEYWORDS):
         return "recruitment"
@@ -205,6 +215,11 @@ def heuristic_extract_profile(text: str) -> dict[str, Any]:
     if matched_fields:
         profile["interest_fields"] = matched_fields
         profile["desired_job"] = matched_fields[0]
+
+    for topic, keywords in POLICY_TOPIC_KEYWORDS.items():
+        if any(keyword in text for keyword in keywords):
+            profile["policy_topic"] = topic
+            break
 
     desired_job_match = re.search(r"([가-힣A-Za-z0-9+# ]{2,20})\s*(쪽|분야|직무)로", text)
     if desired_job_match and not profile.get("desired_job"):

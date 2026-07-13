@@ -16,6 +16,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from app.graph.graph import get_agent_graph
+from app.repositories.chat_memory import SupabaseChatMemoryRepository
 from app.schemas.chat import ChatRequest, ChatTurnResponse, UserProfile
 
 logger = logging.getLogger(__name__)
@@ -23,12 +24,34 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 _STREAM_CHUNK_SIZE = 24
+_chat_memory = SupabaseChatMemoryRepository()
 
 
 async def _run_agent(payload: ChatRequest) -> dict:
     graph = get_agent_graph()
     config = {"configurable": {"thread_id": payload.session_id}}
-    return await graph.ainvoke({"user_input": payload.message}, config=config)
+    memory = await _chat_memory.load(payload.session_id)
+    initial_state: dict = {
+        "session_id": payload.session_id,
+        "user_input": payload.message,
+    }
+    if memory.messages:
+        initial_state["conversation_history"] = memory.messages
+    if memory.profile:
+        initial_state["profile"] = memory.profile
+    if memory.pending_request:
+        initial_state["pending_request"] = memory.pending_request
+
+    result = await graph.ainvoke(initial_state, config=config)
+    await _chat_memory.save_turn(
+        session_id=payload.session_id,
+        user_message=payload.message,
+        assistant_message=result.get("final_response", ""),
+        intent=result.get("intent", "GENERAL"),
+        profile=result.get("profile") or {},
+        pending_request=result.get("pending_request") or {},
+    )
+    return result
 
 
 @router.post("", response_model=ChatTurnResponse)
