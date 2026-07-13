@@ -15,8 +15,6 @@
 #
 # 필요한 GitHub Secrets (repo → Settings → Secrets and variables → Actions 에 등록):
 #   - UPSTAGE_API_KEY: 테스트 및 AI 리뷰용 LLM API 키
-#   - SUPABASE_URL:    Supabase 프로젝트 URL
-#   - SUPABASE_KEY:    Supabase API 키
 #   ※ .env는 커밋하지 않으므로 GitHub 서버는 키를 모름 → Secrets에 등록해야 함
 
 # 워크플로우 이름 (Actions 탭에 표시됨)
@@ -118,8 +116,6 @@ jobs:
         # (로그에는 *** 로 가려져서 안전)
         env:
           UPSTAGE_API_KEY: ${{ secrets.UPSTAGE_API_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: uv run pytest tests/ -v --tb=short
 
   # ═══════════════════════════════════════════════════════════════

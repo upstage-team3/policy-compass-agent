@@ -102,10 +102,13 @@ Ruff lint
 | 온통청년 | `YOUTHCENTER_POLICY_API_KEY`, `YOUTHCENTER_POLICY_API_URL` |
 | 고용24 훈련 | `EMPLOYMENT24_TRAINING_API_KEY`, `EMPLOYMENT24_TRAINING_API_URL` |
 | 고용24 채용 | `EMPLOYMENT24_JOB_API_KEY` |
+| 기업마당 | `BIZINFO_API_KEY`, `BIZINFO_API_URL` |
+| 대화 DB | `SUPABASE_URL`, `SUPABASE_KEY` |
 
 채용행사·공채속보·공채기업정보 URL은 공개 기본값으로 관리한다. 권한이 없는 `210L01` 채용정보목록 URL은 Secret으로 등록하지 않는다.
-| 기업마당 | `BIZINFO_API_KEY`, `BIZINFO_API_URL` |
-| 선택 DB | `SUPABASE_URL`, `SUPABASE_KEY` |
+
+`SUPABASE_KEY` 이름에는 publishable 키가 아니라 RLS를 우회하는 서버 전용
+secret/service_role 키를 등록한다. CD는 이 값을 VM의 `.env`에만 기록한다.
 
 빈 Secret이 있으면 CD가 `.env` 파일은 만들더라도 해당 기능은 fallback으로 동작할 수 있다.
 

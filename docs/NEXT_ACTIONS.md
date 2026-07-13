@@ -29,16 +29,32 @@
 ## P2. 대화 품질
 
 - [ ] Router 결과에 따라 SSE `status` 메시지를 다르게 표시
-- [ ] `interest_fields`를 무조건 합치지 않고 유지·교체 의도를 처리
-- [ ] 새 관심 분야 요청 시 현재 요청을 우선하는 회귀 테스트 추가
+- [x] `interest_fields`를 무조건 합치지 않고 현재 발화의 새 값으로 교체
+- [x] 최근 대화와 미완료 검색 계획을 Router/Profile/Conversation에 전달
+- [x] 조건 답변 뒤 원래 요청과 검색어로 Tool 검색 재개
+- [x] 정책·훈련·채용·창업 유형별 필수 조건 확인
+- [x] 고정 검색 실패 문구를 출처·검색어 기반 LLM 응답으로 교체
+- [x] 새 관심 분야와 멀티턴 주거정책 요청 회귀 테스트 추가
 - [x] 설명형·추천형·일반 대화 경계 fixture 추가
 - [ ] Router 평가 질문과 기대 결과 표 작성
 
-## P3. 배포 회귀
+## P3. 대화 메모리 운영
 
-- [ ] `git diff`에서 코드와 문서 변경 범위 확인
-- [ ] Ruff lint/format 통과
-- [x] pytest `57 passed` 유지
+- [x] Supabase `chat_logs`, `chat_sessions` 스키마와 RLS 적용
+- [x] 최근 메시지 8개, 프로필, `pending_request` 저장·복원
+- [x] 주민번호·카드번호 형태 마스킹과 메시지 길이 제한
+- [x] `SUPABASE_URL`, 서버용 secret/service_role `SUPABASE_KEY`를 CD에 전달
+- [x] 실제 Supabase 저장·복원 smoke test
+- [ ] 로그인 기반 session_id 소유권 검증
+- [ ] 대화 보존 기간과 사용자 삭제 기능
+- [ ] 같은 세션의 동시 요청 충돌 제어
+- [ ] Supabase 지연·실패율 운영 지표
+
+## P4. 배포 회귀
+
+- [x] `git diff`에서 코드와 문서 변경 범위 확인
+- [x] Ruff lint/format 통과
+- [x] pytest `64 passed` 유지
 - [ ] 기존 CI를 통해 변경분 검증
 - [ ] 기존 CD를 통해 Google Cloud에 변경분 반영
 - [ ] 외부 `/`, `/api/health`, `/docs` 확인
@@ -66,10 +82,19 @@ uv run pytest tests -q
 | 서울 데이터 분석 신입 채용정보 찾아줘 | `SEARCH` | `recommend` | `recruitment` |
 | 카페 창업 지원사업 추천해줘 | `SEARCH` | `recommend` | `business` |
 
+멀티턴 회귀:
+
+```text
+사용자: 거주지원을 받고 싶은데 관련 정책 있어?
+Agent: 거주 지역, 만 나이, 현재 상태 확인
+사용자: 서울에 사는 만 25세 취업 준비생이야
+Agent: 원래 요청한 주거 정책 검색 재개
+```
+
 ## 후순위
 
 - 실제 LLM token streaming
-- Redis 또는 DB checkpointer
+- LangGraph interrupt가 필요해질 때 영속 checkpointer 검토
 - API 수집과 DB 조회 계층 분리
 - Supabase pgvector 기반 검색
 - 정책 공고 Document Parse / Information Extract

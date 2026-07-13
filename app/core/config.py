@@ -71,6 +71,10 @@ class Settings(BaseSettings):
         default="https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do",
         validation_alias=AliasChoices("BIZINFO_BASE_URL", "BIZINFO_API_URL"),
     )
+
+    # Supabase conversation memory (unset means in-process memory only)
+    supabase_url: str | None = None
+    supabase_key: str | None = None
     data_dir: Path = BASE_DIR / "data"
 
 

@@ -40,7 +40,27 @@ curl -X POST http://localhost:8000/api/chat \
   -d "{\"session_id\":\"demo-session-001\",\"message\":\"서울 사는 만 28세 미취업자인데 구직지원금 받을 수 있어?\"}"
 ```
 
-`session_id`는 같은 대화 안에서 프로필을 누적하는 데 사용한다.
+`session_id`는 같은 대화 안에서 프로필과 미완료 검색 요청을 누적하는 데 사용한다.
+영문, 숫자, `_`, `-`만 허용하며 최대 128자다. 운영 클라이언트는 추측하기
+어려운 UUID를 생성하고 같은 대화에서 유지해야 한다.
+
+## Supabase 대화 메모리
+
+`data/chat_memory_schema.sql`을 Supabase SQL Editor에서 실행한다. 다음 데이터만
+현재 문맥으로 다시 불러온다.
+
+- 최근 사용자/Assistant 메시지 8개
+- 지역, 나이, 취업·창업 상태 등 구조화 프로필
+- 조건 확인 중인 원래 요청, Tool 종류, 검색어(`pending_request`)
+
+메시지는 최대 4,000자까지 저장하고 주민번호·카드번호 형태는 마스킹한다.
+Supabase 조회 2건과 저장 2건은 각각 병렬 처리하며 요청 timeout은 3초다.
+DB가 없거나 실패해도 채팅 그래프는 인프로세스 `MemorySaver`로 계속 동작한다.
+
+`chat_logs`, `chat_sessions`는 RLS가 켜져 있고 클라이언트 정책은 만들지 않는다.
+따라서 `SUPABASE_KEY`에는 publishable/anon 키가 아니라 백엔드 전용
+secret/service_role 키를 설정해야 한다. 키 이름은 통일성을 위해
+`SUPABASE_KEY`를 사용하지만 권한은 반드시 서버용이어야 한다.
 
 ## MVP 외부 API 우선순위
 
@@ -71,7 +91,8 @@ Tool 입력/출력 스키마와 사용자에게 먼저 물어볼 조건은 `docs
 - LLM 기반 `action`, `response_mode`, `request_kind`, `search_query` 계획과 Tool 단일 선택 추가
 - 키워드 규칙을 `app/graph/fallbacks.py`로 격리
 - 온통청년 `getPlcy` JSON 응답과 `YouthPolicyItem` normalizer 추가
-- 검증 기준: Ruff 통과, `uv run pytest tests -q` 53개 통과
+- Supabase 최근 대화·프로필·미완료 요청 저장/복원 추가
+- 검증 기준: Ruff 통과, `uv run pytest tests -q` 64개 통과
 
 ## 온통청년 Open API
 
@@ -220,6 +241,8 @@ EMPLOYMENT24_OPEN_RECRUITMENT_API_URL=https://www.work24.go.kr/cm/openApi/call/w
 EMPLOYMENT24_COMPANY_API_URL=https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L31.do
 BIZINFO_API_KEY=
 BIZINFO_API_URL=https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do
+SUPABASE_URL=
+SUPABASE_KEY=
 SERVICE_NAME=policy-compass
 APP_ENV=local
 CORS_ORIGINS=["*"]
@@ -232,10 +255,11 @@ CORS_ORIGINS=["*"]
 - 배포/연동 테스트 기준으로 데모용 대체 정책 데이터 fallback은 사용하지 않는다.
 - 실제 온통청년/고용24/기업마당 API를 확인하려면 VM/로컬 `.env`에
   해당 API 키를 넣는다.
+- `SUPABASE_KEY`는 secret/service_role 키만 사용하고 브라우저 코드에 전달하지 않는다.
 
 ## LLM 사용 메모
 
-Upstage Solar API 키가 있으면 Router가 `action`, `response_mode`, `request_kind`, `search_query`를 함께 생성하고, Profile과 Response도 LLM을 우선 사용한다. Router 출력은 `app/graph/contracts.py`의 `RoutingDecision`으로 검증한다. `RESPOND`는 통합 Conversation Node, `SEARCH`는 Tool 경로로 이동한다. 정상 LLM 판단은 키워드 규칙이 덮어쓰지 않으며, 키 누락·호출 실패·계약 오류 때만 `app/graph/fallbacks.py`가 동작한다.
+Upstage Solar API 키가 있으면 Router가 `action`, `response_mode`, `request_kind`, `search_query`, `resume_pending`을 함께 생성하고, Profile과 Response도 LLM을 우선 사용한다. Router 출력은 `app/graph/contracts.py`의 `RoutingDecision`으로 검증한다. `RESPOND`는 통합 Conversation Node, `SEARCH`는 Tool 경로로 이동한다. 정상 LLM 판단은 키워드 규칙이 덮어쓰지 않으며, 키 누락·호출 실패·계약 오류 때만 `app/graph/fallbacks.py`가 동작한다.
 
 정책 추천에서 LLM은 다음 역할로 제한한다.
 

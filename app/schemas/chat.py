@@ -19,8 +19,13 @@ class UserProfile(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    session_id: str = Field(default_factory=lambda: str(uuid4()))
-    message: str
+    session_id: str = Field(
+        default_factory=lambda: str(uuid4()),
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    message: str = Field(min_length=1, max_length=4000)
 
 
 class ChatTurnResponse(BaseModel):

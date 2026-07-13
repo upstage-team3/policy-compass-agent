@@ -6,13 +6,66 @@ from typing import Any
 
 from app.core.llm import LLMUnavailableError, SolarLLMClient
 from app.core.prompts import (
+    CLARIFICATION_SYSTEM_PROMPT,
     CONVERSATION_SYSTEM_PROMPT,
     GROUNDED_DATA_RESPONSE_SYSTEM_PROMPT,
+    MISSING_SLOT_LABELS,
+    NO_RESULTS_SYSTEM_PROMPT,
     RESPONSE_SYSTEM_PROMPT,
 )
 from app.graph.fallbacks import general_reply as fallback_general_reply
 
 logger = logging.getLogger(__name__)
+
+
+def _compact_candidates(candidates: list[dict]) -> list[dict]:
+    compact: list[dict] = []
+    for candidate in candidates[:3]:
+        item = {}
+        for key, value in candidate.items():
+            if key == "raw":
+                continue
+            if isinstance(value, str):
+                item[key] = value[:1200]
+            elif isinstance(value, dict):
+                item[key] = {
+                    nested_key: nested_value for nested_key, nested_value in value.items() if nested_key != "raw"
+                }
+            else:
+                item[key] = value
+        compact.append(item)
+    return compact
+
+
+async def compose_clarification_reply(
+    llm: SolarLLMClient,
+    *,
+    original_request: str,
+    profile: dict[str, Any],
+    missing_slots: list[str],
+    history: list[dict[str, str]],
+) -> str:
+    labels = [MISSING_SLOT_LABELS.get(slot, slot) for slot in missing_slots]
+    if llm.is_configured:
+        payload = {
+            "original_request": original_request,
+            "known_profile": profile,
+            "missing_slots": labels,
+            "recent_history": history[-6:],
+        }
+        try:
+            return await llm.complete(
+                [
+                    {"role": "system", "content": CLARIFICATION_SYSTEM_PROMPT},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ],
+                temperature=0.2,
+            )
+        except LLMUnavailableError:
+            logger.info("LLM 미설정으로 조건 확인 템플릿을 사용합니다.")
+        except Exception:  # noqa: BLE001
+            logger.exception("조건 확인 LLM 호출 실패, 템플릿으로 폴백합니다.")
+    return "정확한 결과를 찾기 위해 " + ", ".join(labels) + "을 알려주시겠어요?"
 
 
 async def compose_grounded_results(
@@ -32,7 +85,7 @@ async def compose_grounded_results(
         "profile": profile,
         "source_type": source_type,
         "response_mode": response_mode,
-        "candidates": candidates[:3],
+        "candidates": _compact_candidates(candidates),
     }
     try:
         return await llm.complete(
@@ -47,6 +100,48 @@ async def compose_grounded_results(
     except Exception:  # noqa: BLE001
         logger.exception("%s 검색 결과 LLM 생성 실패, 템플릿으로 폴백합니다.", source_type)
     return None
+
+
+async def compose_no_results_reply(
+    llm: SolarLLMClient,
+    *,
+    user_input: str,
+    profile: dict[str, Any],
+    source_type: str,
+    search_query: str | None,
+) -> str:
+    payload = {
+        "original_request": user_input,
+        "known_profile": profile,
+        "source_type": source_type,
+        "search_query": search_query,
+    }
+    if llm.is_configured:
+        try:
+            return await llm.complete(
+                [
+                    {"role": "system", "content": NO_RESULTS_SYSTEM_PROMPT},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ],
+                temperature=0.2,
+            )
+        except LLMUnavailableError:
+            logger.info("LLM 미설정으로 검색 결과 없음 템플릿을 사용합니다.")
+        except Exception:  # noqa: BLE001
+            logger.exception("검색 결과 없음 LLM 호출 실패, 템플릿으로 폴백합니다.")
+
+    source_names = {
+        "youthcenter_policy": "온통청년 청년정책",
+        "work24_training": "고용24 훈련과정",
+        "work24_recruitment": "고용24 채용 보조정보",
+        "bizinfo": "기업마당 지원사업",
+    }
+    source_name = source_names.get(source_type, "공식 정책 데이터")
+    query_hint = f" '{search_query}' 검색어" if search_query else " 현재 조건"
+    return (
+        f"{source_name}에서{query_hint}에 맞는 결과를 찾지 못했어요. "
+        "이미 알려주신 조건은 유지할게요. 관심 분야를 조금 넓히거나 다른 표현으로 말씀해주시면 다시 찾아볼게요."
+    )
 
 
 async def compose_scored_results(
@@ -80,10 +175,20 @@ async def compose_scored_results(
     return None
 
 
-async def compose_conversation_reply(llm: SolarLLMClient, *, query: str, response_mode: str) -> str:
+async def compose_conversation_reply(
+    llm: SolarLLMClient,
+    *,
+    query: str,
+    response_mode: str,
+    history: list[dict[str, str]],
+) -> str:
     if llm.is_configured:
         try:
-            payload = {"user_input": query, "response_mode": response_mode}
+            payload = {
+                "user_input": query,
+                "response_mode": response_mode,
+                "recent_history": history[-8:],
+            }
             return await llm.complete(
                 [
                     {"role": "system", "content": CONVERSATION_SYSTEM_PROMPT},

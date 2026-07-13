@@ -18,7 +18,7 @@
 #   - GCE_USERNAME: Compute Engine SSH 사용자명 (gcloud 접속 사용자명, 예: appuser)
 #   - UPSTAGE_API_KEY: Upstage API 키
 #   - SUPABASE_URL: Supabase URL
-#   - SUPABASE_KEY: Supabase 키
+#   - SUPABASE_KEY: 서버 전용 Supabase secret/service_role 키
 
 name: Policy Compass Agent CD
 

@@ -48,6 +48,7 @@ async def test_router_uses_llm_semantics_without_keyword_override(monkeypatch):
         "request_kind": "general",
         "search_query": None,
         "routing_source": "llm",
+        "resumed_pending": False,
     }
     assert llm.calls[0]["kwargs"]["response_format_json"] is True
 
@@ -138,9 +139,91 @@ async def test_missing_slot_node_flags_missing_region():
 
 
 async def test_missing_slot_node_no_missing_when_complete():
-    state = {"profile": {"region": "서울", "employment_status": "unemployed_seeking_job"}}
+    state = {
+        "search_query": "주거",
+        "profile": {"region": "서울", "age": 25, "employment_status": "unemployed_seeking_job"},
+    }
     result = await nodes.missing_slot_node(state)
     assert result["missing_slots"] == []
+
+
+async def test_router_resumes_pending_search_from_clarification_answer(monkeypatch):
+    llm = StubLLM(
+        '{"action":"SEARCH","response_mode":"recommend","request_kind":"youth_policy",'
+        '"search_query":"주거","resume_pending":true}'
+    )
+    monkeypatch.setattr(nodes, "_llm", llm)
+    pending = {
+        "original_request": "거주지원을 받고 싶어",
+        "request_kind": "youth_policy",
+        "response_mode": "recommend",
+        "search_query": "주거",
+    }
+
+    result = await nodes.router_node(
+        {
+            "user_input": "서울에 살고 있고 취업 준비 중인 만 25세야",
+            "pending_request": pending,
+            "conversation_history": [{"role": "assistant", "content": "지역과 나이를 알려주세요"}],
+        }
+    )
+
+    assert result["resumed_pending"] is True
+    assert result["search_query"] == "주거"
+    router_payload = llm.calls[0]["messages"][1]["content"]
+    assert "pending_request" in router_payload
+    assert "recent_history" in router_payload
+
+
+async def test_router_does_not_resume_pending_search_for_out_of_scope_fallback(monkeypatch):
+    class OfflineLLM:
+        is_configured = False
+
+    monkeypatch.setattr(nodes, "_llm", OfflineLLM())
+    result = await nodes.router_node(
+        {
+            "user_input": "법률 자문을 해줘",
+            "pending_request": {
+                "original_request": "주거 정책을 찾아줘",
+                "request_kind": "youth_policy",
+                "response_mode": "recommend",
+                "search_query": "주거",
+            },
+        }
+    )
+
+    assert result["action"] == "RESPOND"
+    assert result["response_mode"] == "out_of_scope"
+    assert result["resumed_pending"] is False
+
+
+async def test_clarification_stores_original_search_plan(monkeypatch):
+    monkeypatch.setattr(nodes, "_llm", StubLLM("나이와 거주 지역을 알려주시겠어요?"))
+    result = await nodes.clarification_node(
+        {
+            "user_input": "거주지원을 받고 싶어",
+            "request_kind": "youth_policy",
+            "response_mode": "recommend",
+            "search_query": "주거",
+            "missing_slots": ["region", "age"],
+            "profile": {},
+        }
+    )
+
+    assert result["pending_request"]["original_request"] == "거주지원을 받고 싶어"
+    assert result["pending_request"]["search_query"] == "주거"
+
+
+async def test_conversation_node_sends_recent_history_to_llm(monkeypatch):
+    llm = StubLLM("그 고민부터 이어서 이야기해볼게요.")
+    monkeypatch.setattr(nodes, "_llm", llm)
+    history = [{"role": "user", "content": "취업 준비가 막막해"}]
+
+    await nodes.conversation_node(
+        {"user_input": "어디서부터 시작할까?", "response_mode": "general", "conversation_history": history}
+    )
+
+    assert "취업 준비가 막막해" in llm.calls[0]["messages"][1]["content"]
 
 
 async def test_profile_extractor_preserves_llm_selected_request_kind(monkeypatch):

@@ -210,7 +210,11 @@ def heuristic_extract_profile(text: str) -> dict[str, Any]:
     if desired_job_match and not profile.get("desired_job"):
         profile["desired_job"] = desired_job_match.group(1).strip()
 
-    if "지원금" in text:
+    if any(keyword in text for keyword in ("주거", "거주", "월세", "전세")):
+        profile["preferred_support_type"] = "주거"
+    elif any(keyword in text for keyword in ("생활", "복지", "문화")):
+        profile["preferred_support_type"] = "생활·복지"
+    elif "지원금" in text:
         profile["preferred_support_type"] = "지원금"
     elif any(keyword in text for keyword in TRAINING_KEYWORDS):
         profile["preferred_support_type"] = "훈련"
