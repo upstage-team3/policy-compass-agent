@@ -63,6 +63,11 @@ class Settings(BaseSettings):
         default="https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do",
         validation_alias=AliasChoices("BIZINFO_BASE_URL", "BIZINFO_API_URL"),
     )
+
+    # Supabase - fallback 캐시(예: training_courses) 조회/적재용. 미설정 시 해당 fallback 비활성화
+    supabase_url: str | None = None
+    supabase_key: str | None = None
+
     data_dir: Path = BASE_DIR / "data"
 
 
