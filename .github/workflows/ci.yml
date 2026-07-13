@@ -29,6 +29,7 @@ on:
     paths:
       - 'app/**'
       - 'tests/**'
+      - 'frontend/**'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/**'
@@ -39,6 +40,7 @@ on:
     paths:
       - 'app/**'
       - 'tests/**'
+      - 'frontend/**'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/**'
