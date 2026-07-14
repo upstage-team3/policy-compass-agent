@@ -284,6 +284,14 @@ def test_youth_search_terms_normalize_housing_request():
     assert terms == ["거주지원을 받고 싶은데 관련 정책있어?", "주거"]
 
 
+def test_youth_search_terms_keep_specific_housing_and_finance_scope():
+    rent_terms = _build_youth_search_terms(YouthPolicySearchInput(keywords="월세"))
+    finance_terms = _build_youth_search_terms(YouthPolicySearchInput(keywords="금융"))
+
+    assert rent_terms == ["월세"]
+    assert finance_terms == ["금융"]
+
+
 def test_youth_search_terms_use_profile_for_generic_request():
     terms = _build_youth_search_terms(
         YouthPolicySearchInput(

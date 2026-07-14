@@ -7,6 +7,7 @@ from app.graph.response_composer import (
     _compact_candidates,
     clarification_template,
     clean_response_text,
+    compose_no_results_reply,
     compose_youth_policy_response,
 )
 from app.graph.scoring import deadline_status, score_policy
@@ -41,6 +42,35 @@ def test_heuristic_route_general():
     assert nodes._heuristic_route("안녕하세요") == "GENERAL"
 
 
+async def test_fallback_router_keeps_specific_youth_policy_query():
+    result = await nodes.router_node(
+        {
+            "user_input": "청년 월세 지원 정책은 없어?",
+            "profile": {"region": "경기", "age": 24},
+        }
+    )
+
+    assert result["action"] == "SEARCH"
+    assert result["request_kind"] == "youth_policy"
+    assert result["search_query"] == "월세"
+
+
+async def test_fallback_router_repeats_completed_search_after_region_correction():
+    result = await nodes.router_node(
+        {
+            "user_input": "경기도 말고 서울로",
+            "request_kind": "youth_policy",
+            "response_mode": "recommend",
+            "search_query": "금융",
+            "profile": {"region": "경기", "age": 24, "policy_topic": "금융·복지·문화"},
+        }
+    )
+
+    assert result["action"] == "SEARCH"
+    assert result["request_kind"] == "youth_policy"
+    assert result["search_query"] == "금융"
+
+
 def test_clean_response_text_removes_markdown_formal_intro_and_internal_fields():
     text = (
         '### 답변\n사용자님의 질문("청년 지원 정책 정보 요청")에 따라, 서울 정책 후보를 추천합니다.\n'
@@ -62,6 +92,20 @@ def test_clarification_template_avoids_broken_korean_particle():
 
     assert reply == "정확한 결과를 찾으려면 다음 정보가 필요해요: 거주 지역, 만 나이."
     assert "나이을" not in reply
+
+
+async def test_youth_no_results_reply_does_not_recommend_other_projects():
+    reply = await compose_no_results_reply(
+        nodes._llm,
+        user_input="청년 월세 지원 정책은 없어?",
+        profile={"region": "경기", "age": 24},
+        source_type="youthcenter_policy",
+        search_query="월세",
+    )
+
+    assert "검색 결과를 찾지 못했어요" in reply
+    assert "안내할 정책이 없습니다" in reply
+    assert "넓히" not in reply
 
 
 def test_youth_policy_template_groups_truly_missing_application_fields():
@@ -251,6 +295,18 @@ def test_heuristic_extract_profile_recognizes_official_youth_policy_topics():
     assert nodes._heuristic_extract_profile("월세와 주거비 지원이 필요해")["policy_topic"] == "주거"
     assert nodes._heuristic_extract_profile("문화생활 지원 정책을 찾아줘")["policy_topic"] == "금융·복지·문화"
     assert nodes._heuristic_extract_profile("청년 참여 활동을 하고 싶어")["policy_topic"] == "참여·기반"
+
+
+async def test_profile_extractor_applies_explicit_region_correction():
+    result = await nodes.profile_extractor_node(
+        {
+            "user_input": "경기도 말고 서울로",
+            "request_kind": "youth_policy",
+            "profile": {"region": "경기", "age": 24, "policy_topic": "금융·복지·문화"},
+        }
+    )
+
+    assert result["profile"]["region"] == "서울"
 
 
 async def test_missing_slot_node_flags_missing_region():

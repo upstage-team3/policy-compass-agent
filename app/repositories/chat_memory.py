@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -11,16 +10,13 @@ import httpx
 
 from app.core.config import get_settings
 from app.core.http import log_external_api_error
+from app.core.privacy import redact_sensitive_structure, redact_sensitive_text
 
 logger = logging.getLogger(__name__)
 
 _MAX_HISTORY_MESSAGES = 8
 _MAX_MESSAGE_LENGTH = 4000
 _REQUEST_TIMEOUT_SECONDS = 3
-_SENSITIVE_PATTERNS = (
-    re.compile(r"\b\d{6}-?[1-4]\d{6}\b"),
-    re.compile(r"\b(?:\d[ -]?){12,16}\b"),
-)
 
 
 @dataclass
@@ -31,10 +27,7 @@ class ChatMemoryContext:
 
 
 def _safe_content(content: str) -> str:
-    sanitized = content[:_MAX_MESSAGE_LENGTH]
-    for pattern in _SENSITIVE_PATTERNS:
-        sanitized = pattern.sub("[민감정보 삭제]", sanitized)
-    return sanitized
+    return redact_sensitive_text(content[:_MAX_MESSAGE_LENGTH])
 
 
 class SupabaseChatMemoryRepository:
@@ -78,7 +71,7 @@ class SupabaseChatMemoryRepository:
                     response.raise_for_status()
                     rows = response.json()
                     context.messages = [
-                        {"role": row["role"], "content": row["content"]}
+                        {"role": row["role"], "content": _safe_content(row["content"])}
                         for row in reversed(rows)
                         if row.get("role") in {"user", "assistant"} and row.get("content")
                     ]
@@ -98,8 +91,8 @@ class SupabaseChatMemoryRepository:
                     response.raise_for_status()
                     rows = response.json()
                     if rows:
-                        context.profile = rows[0].get("profile") or {}
-                        context.pending_request = rows[0].get("pending_request") or {}
+                        context.profile = redact_sensitive_structure(rows[0].get("profile") or {})
+                        context.pending_request = redact_sensitive_structure(rows[0].get("pending_request") or {})
                 except Exception as exc:  # noqa: BLE001
                     log_external_api_error(logger, "Supabase 세션 상태 조회", exc)
 
@@ -152,8 +145,8 @@ class SupabaseChatMemoryRepository:
                         headers={"Prefer": "resolution=merge-duplicates"},
                         json={
                             "session_id": session_id,
-                            "profile": profile,
-                            "pending_request": pending_request,
+                            "profile": redact_sensitive_structure(profile),
+                            "pending_request": redact_sensitive_structure(pending_request),
                             "updated_at": datetime.now(UTC).isoformat(),
                         },
                     )

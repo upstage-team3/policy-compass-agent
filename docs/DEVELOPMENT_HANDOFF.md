@@ -42,7 +42,12 @@
 - 기업마당 조회 폭을 최대 5배로 넓히고 관심 분야 유사어를 우선 정렬해 뒤쪽의 관련 후보도 점수화
 - 점수는 전체 평가 기준 대비 확인된 일치 근거로 계산하고, 실제 비교 가능한 범위는 `evidence_coverage`로 분리
 - 구체적인 정책 검색어가 0건일 때 무관한 넓은 정책 분야로 바꾸지 않음
+- 월세·전세·금융 같은 구체 하위 유형은 주거·복지로 완화하거나 인접 지역 사업으로 대체하지 않고,
+  무결과이면 현재 조회 결과가 없다고 안내
+- `경기도 말고 서울로` 같은 지역 정정은 부정된 기존 지역이 아니라 정정 대상을 저장
+- 시·도만 확인된 사용자를 특정 시·군·구 전용 정책의 대상자로 간주하지 않음
 - Supabase에 최근 대화 8개, 프로필, 미완료 검색 계획을 저장·복원
+- Langfuse callback을 LangGraph 실행에 연결해 세션별 Router·Tool·응답 Trace 수집
 - 정책 검색 전에 유형별 필수 조건을 묻고 원래 요청으로 검색 재개
 - 온통청년 정책을 일자리, 주거, 교육·직업·훈련, 금융·복지·문화, 참여·기반으로 구분
 - 넓은 청년정책 문의는 관심 분야를 먼저 묻고, 취업 상태는 일자리 분야에서만 추가 확인
@@ -59,7 +64,9 @@
 - 온통청년 요청에서 오류를 유발하던 브라우저형 헤더를 제거하고 5xx를 한 번 재시도
 - 온통청년 호출 실패를 실제 결과 0건과 구분해 `정책이 없다`고 잘못 안내하지 않는 결정론적 장애 안내 추가
 - 브라우저 저장 전 민감정보 마스킹, 최근 20개 채팅·채팅별 50개 메시지 제한, 개별·전체 삭제
-- Ruff lint/format, pytest `149 passed`, 프런트 저장 회귀 `7 passed`, 프로덕션 빌드 통과
+- 주민등록번호·외국인등록번호·전화번호·이메일·계좌·카드 형태를 브라우저 전송 전에 차단하고 화면에는 삭제 표식으로 표시
+- API 직접 호출도 LangGraph·LLM·외부 정책 API·Langfuse 실행 전에 차단하며 Supabase 구조화 상태까지 재귀 마스킹
+- Ruff lint/format, pytest `164 passed`, 프런트 저장 회귀 `8 passed`, 프로덕션 빌드 통과
 - 최신 main `a89d1e3`의 GitHub Actions CI/CD와 GCE 내부 헬스체크 성공
 
 ## 현재 Agent 흐름
@@ -110,6 +117,7 @@ Router의 정상 출력 예시:
 | `app/graph/state.py` | `action`, `response_mode`, 호환 `intent`, 검색 계획과 결과 상태 |
 | `app/core/prompts.py` | Router, Profile, Conversation, Grounded Response 프롬프트 |
 | `app/core/llm.py` | Upstage Solar HTTP 클라이언트와 JSON 추출 |
+| `app/core/privacy.py` | 민감 식별정보 탐지·마스킹과 입력 차단 안내 |
 | `app/core/administrative_regions.py` | 행정표준코드 현존 시·군·구 300개 정적 스냅샷 |
 | `app/core/regions.py` | 사용자 지역·법정코드·기업마당 태그 정규화와 대표 좌표 기반 근접 거리 |
 | `app/core/relevance.py` | 관심 분야 유사어와 정책 본문 관련성 판정 |
@@ -231,7 +239,7 @@ uv run pytest tests -q
 cd frontend && pnpm test && pnpm run build
 ```
 
-현재 기준 기대 결과는 Python `149 passed`, 프런트 저장 회귀 `7 passed`다. 테스트는 외부 키를 비워 네트워크 없이 재현 가능해야 한다.
+현재 기준 기대 결과는 Python `164 passed`, 프런트 저장 회귀 `8 passed`다. 테스트는 외부 키를 비워 네트워크 없이 재현 가능해야 한다.
 
 ## 핵심 수동 테스트
 

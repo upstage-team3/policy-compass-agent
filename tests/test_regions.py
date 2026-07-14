@@ -15,6 +15,7 @@ from app.core.regions import (
     region_distance_km,
     region_match_scope,
     resolve_region,
+    user_region_reference,
     youth_policy_region_scope,
 )
 from app.graph import nodes
@@ -66,6 +67,11 @@ def test_resolve_sigungu_to_sido_and_official_code():
     assert resolved.sigungu == "성남시"
     assert resolved.youth_code == "41130"
     assert bizinfo_region_tag("성남시") == "경기"
+
+
+def test_region_correction_prefers_replacement_target():
+    assert user_region_reference("경기도 말고 서울로") == "서울"
+    assert user_region_reference("서울이 아니라 부산으로") == "부산"
 
 
 @pytest.mark.parametrize(
@@ -235,6 +241,11 @@ def test_youth_region_filter_does_not_restore_other_regions_for_sigungu():
     assert [item.policy_id for item in filtered] == ["seongnam", "all"]
 
 
+def test_youth_region_scope_does_not_treat_municipal_policy_as_province_wide():
+    assert youth_policy_region_scope("경기", "41220", "평택시") == "unknown"
+    assert youth_policy_region_scope("평택시", "41220", "평택시") == "exact"
+
+
 def test_youth_region_scope_distinguishes_municipalities_in_the_same_province():
     assert youth_policy_region_scope("성남시", "41110", "수원시") == "mismatch"
     assert youth_policy_region_scope("성남시", "41135", "성남시 분당구") == "exact"
@@ -375,6 +386,31 @@ async def test_youth_search_returns_nearby_references_in_distance_order(monkeypa
     assert [item.policy_id for item in results] == ["incheon", "chungnam", "busan"]
     assert all(item.match_scope == "nearby" for item in results)
     assert [item.distance_km for item in results] == sorted(item.distance_km for item in results)
+
+
+async def test_youth_narrow_search_does_not_return_other_region_references(monkeypatch):
+    repository = YouthCenterRepository()
+    repository._settings = SimpleNamespace(
+        youthcenter_policy_api_key="test-key",
+        youthcenter_policy_api_url="https://example.com/youth",
+    )
+
+    async def fake_fetch(client, api_url, params):
+        del client, api_url, params
+        return [
+            YouthPolicyItem(
+                policy_id="gwangju-rent",
+                title="광주 청년 월세 지원",
+                region="광주",
+                raw={"zipCd": "29110"},
+            )
+        ]
+
+    monkeypatch.setattr(repository, "_fetch", fake_fetch)
+
+    results = await repository.search(YouthPolicySearchInput(region="경기", keywords="월세", page_size=10))
+
+    assert results == []
 
 
 async def test_youth_search_uses_official_code_for_non_gyeonggi_municipality(monkeypatch):

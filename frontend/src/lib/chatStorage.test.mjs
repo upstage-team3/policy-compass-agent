@@ -5,8 +5,10 @@ import {
   CHAT_STORAGE_KEY,
   PROFILE_DEFAULTS_STORAGE_KEY,
   clearProfileDefaults,
+  detectSensitiveData,
   loadChatState,
   loadProfileDefaults,
+  privacyGuardMessage,
   sanitizeStoredText,
   saveChatState,
   saveProfileDefaults,
@@ -79,6 +81,20 @@ test("sensitive identifiers are masked before browser persistence", () => {
   assert.equal(raw.includes("1234 5678 9012 3456"), false)
   assert.match(raw, /민감정보 삭제/)
   assert.equal(sanitizeStoredText(sensitive).includes("900101-1234567"), false)
+})
+
+test("sensitive identifiers are detected before network submission", () => {
+  const residentId = "991332-1234567"
+  const phone = "010-1234-5678"
+  const email = "person@example.com"
+
+  assert.deepEqual(detectSensitiveData(residentId), ["주민등록번호·외국인등록번호 형태"])
+  assert.deepEqual(detectSensitiveData(phone), ["전화번호 형태"])
+  assert.deepEqual(detectSensitiveData(email), ["이메일 주소"])
+
+  const reply = privacyGuardMessage(detectSensitiveData(residentId))
+  assert.match(reply, /전송과 정책 검색을 중단/)
+  assert.equal(reply.includes(residentId), false)
 })
 
 test("retention limits keep the newest 20 chats and 50 messages per chat", () => {

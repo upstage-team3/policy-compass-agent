@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import chat, health, policies
 from app.core.config import get_settings
+from app.core.observability import get_langfuse_client, shutdown_langfuse
 from app.schemas.chat import ChatRequest
 
 logging.basicConfig(level=logging.INFO)
@@ -25,7 +26,9 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     logger = logging.getLogger("app")
     settings = get_settings()
     logger.info("%s 시작 (env=%s)", settings.app_name, settings.app_env)
+    get_langfuse_client()
     yield
+    shutdown_langfuse()
     logger.info("%s 종료", settings.app_name)
 
 

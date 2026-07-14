@@ -168,6 +168,16 @@ async def compose_no_results_reply(
     source_type: str,
     search_query: str | None,
 ) -> str:
+    if source_type == "youthcenter_policy":
+        region = profile.get("region")
+        conditions = [f"{region} 지역" if region else None, f"'{search_query}' 검색어" if search_query else None]
+        condition_text = "의 ".join(value for value in conditions if value)
+        condition_prefix = f"{condition_text}에 맞는 " if condition_text else ""
+        return (
+            f"온통청년 청년정책에서 {condition_prefix}검색 결과를 찾지 못했어요. "
+            "현재 조회 결과 기준으로 안내할 정책이 없습니다."
+        )
+
     payload = {
         "original_request": user_input,
         "known_profile": profile,

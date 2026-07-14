@@ -13,6 +13,8 @@ os.environ["EMPLOYMENT24_TRAINING_API_KEY"] = ""
 os.environ["EMPLOYMENT24_JOB_API_KEY"] = ""
 os.environ["SUPABASE_URL"] = ""
 os.environ["SUPABASE_KEY"] = ""
+os.environ["LANGFUSE_PUBLIC_KEY"] = ""
+os.environ["LANGFUSE_SECRET_KEY"] = ""
 
 from app.core.config import get_settings  # noqa: E402
 from app.main import app  # noqa: E402

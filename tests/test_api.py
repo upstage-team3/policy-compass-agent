@@ -7,6 +7,7 @@ import pytest
 
 from app.api.routes import chat as chat_routes
 from app.api.routes.chat import _result_status_message
+from app.repositories.chat_memory import ChatMemoryContext
 
 
 @pytest.mark.parametrize(
@@ -130,6 +131,57 @@ def test_chat_out_of_scope_request(client):
     res = client.post("/api/chat", json={"session_id": session_id, "message": "세무 상담 좀 해줄 수 있어?"})
     body = res.json()
     assert body["intent"] == "OUT_OF_SCOPE"
+
+
+def test_chat_blocks_sensitive_identifier_before_graph_and_tracing(client, monkeypatch):
+    saved: dict = {}
+
+    class CapturingMemory:
+        async def load(self, session_id):
+            del session_id
+            return ChatMemoryContext(profile={"region": "서울"})
+
+        async def save_turn(self, **kwargs):
+            saved.update(kwargs)
+
+    def fail_if_called():
+        raise AssertionError("민감정보 입력은 LangGraph를 실행하면 안 됩니다.")
+
+    monkeypatch.setattr(chat_routes, "_chat_memory", CapturingMemory())
+    monkeypatch.setattr(chat_routes, "get_agent_graph", fail_if_called)
+    monkeypatch.setattr(chat_routes, "create_langfuse_handler", fail_if_called)
+
+    sensitive = "991332-1234567"
+    res = client.post(
+        "/api/chat",
+        json={"session_id": str(uuid.uuid4()), "message": sensitive},
+    )
+    body = res.json()
+
+    assert res.status_code == 200
+    assert body["intent"] == "PRIVACY_BLOCKED"
+    assert body["recommendations"] == []
+    assert "정책 검색을 중단" in body["reply"]
+    assert sensitive not in body["reply"]
+    assert sensitive not in saved["user_message"]
+    assert saved["user_message"] == "[민감정보 삭제]"
+
+
+def test_chat_stream_reports_privacy_guard_instead_of_previous_search(client):
+    sensitive = "991332-1234567"
+
+    with client.stream(
+        "POST",
+        "/api/chat/stream",
+        json={"session_id": str(uuid.uuid4()), "message": sensitive},
+    ) as res:
+        body = "".join(res.iter_text())
+
+    assert res.status_code == 200
+    assert "민감정보를 감지해 입력을 보호 처리했어요." in body
+    assert "정책 검색을 중단" in body
+    assert sensitive not in body
+    assert "평택" not in body
 
 
 def test_chat_stream_emits_sse_events(client):

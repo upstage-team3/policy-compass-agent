@@ -152,6 +152,23 @@ async def router_node(state: AgentState) -> dict[str, Any]:
             request_kind = pending.get("request_kind", request_kind)
             search_query = search_query or pending.get("search_query")
             resumed_pending = True
+        elif (
+            should_resume_general_answer
+            and re.search(r"말고|아니라|아니고|대신", user_input)
+            and user_region_reference(user_input)
+            and state.get("request_kind") in VALID_REQUEST_KINDS - {"general"}
+        ):
+            # LLM 장애 중에도 완료된 검색의 지역만 정정한 후속 발화는
+            # 직전 Tool과 검색어를 유지해 새 지역으로 다시 조회한다.
+            action = "SEARCH"
+            response_mode = state.get("response_mode", "recommend")
+            intent = {
+                "recommend": "RECOMMEND",
+                "eligibility": "ELIGIBILITY_CHECK",
+                "explain": "EXPLAIN",
+            }.get(response_mode, "RECOMMEND")
+            request_kind = state["request_kind"]
+            search_query = state.get("search_query")
 
     logger.info(
         "routing_decision source=%s action=%s mode=%s request_kind=%s has_search_query=%s",

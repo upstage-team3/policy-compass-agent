@@ -36,9 +36,20 @@ RECOMMEND_KEYWORDS = [
     "찾아줘",
     "있을까",
     "있어",
+    "금융지원",
     *TRAINING_KEYWORDS,
     *RECRUITMENT_KEYWORDS,
 ]
+
+YOUTH_POLICY_SPECIFIC_QUERY_KEYWORDS = (
+    "월세",
+    "전세",
+    "주거비",
+    "금융",
+    "자산형성",
+    "문화",
+    "건강",
+)
 
 INTEREST_KEYWORDS = {
     "데이터 분석": ["데이터 분석", "데이터", "분석가", "분석"],
@@ -92,6 +103,13 @@ def extract_training_search_keyword(text: str) -> str | None:
     return None
 
 
+def extract_youth_policy_search_keyword(text: str) -> str | None:
+    """LLM 장애 시에도 구체적인 청년정책 하위 유형을 넓히지 않는다."""
+
+    compact = re.sub(r"\s+", "", text)
+    return next((keyword for keyword in YOUTH_POLICY_SPECIFIC_QUERY_KEYWORDS if keyword in compact), None)
+
+
 def heuristic_route(text: str) -> str:
     if any(keyword in text for keyword in OUT_OF_SCOPE_KEYWORDS):
         return "OUT_OF_SCOPE"
@@ -109,12 +127,13 @@ def heuristic_route(text: str) -> str:
 def routing_plan(text: str, profile: dict[str, Any] | None = None) -> dict[str, str | None]:
     intent = heuristic_route(text)
     if intent == "RECOMMEND":
+        request_kind = classify_request_kind(text, profile)
         return {
             "intent": intent,
             "action": "SEARCH",
             "response_mode": "recommend",
-            "request_kind": classify_request_kind(text, profile),
-            "search_query": None,
+            "request_kind": request_kind,
+            "search_query": extract_youth_policy_search_keyword(text) if request_kind == "youth_policy" else None,
         }
     if intent == "ELIGIBILITY_CHECK":
         return {
