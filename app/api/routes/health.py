@@ -10,4 +10,10 @@ router = APIRouter(tags=["health"])
 @router.get("/health")
 async def health_check() -> dict[str, str]:
     settings = get_settings()
-    return {"status": "ok", "app": settings.app_name, "env": settings.app_env}
+    langfuse_tracing = "enabled" if settings.langfuse_public_key and settings.langfuse_secret_key else "disabled"
+    return {
+        "status": "ok",
+        "app": settings.app_name,
+        "env": settings.app_env,
+        "langfuse_tracing": langfuse_tracing,
+    }

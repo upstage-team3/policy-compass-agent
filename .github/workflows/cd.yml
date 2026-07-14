@@ -19,6 +19,9 @@
 #   - UPSTAGE_API_KEY: Upstage API 키
 #   - SUPABASE_URL: Supabase URL
 #   - SUPABASE_KEY: 서버 전용 Supabase secret/service_role 키
+#   - LANGFUSE_PUBLIC_KEY: Langfuse 프로젝트 Public Key
+#   - LANGFUSE_SECRET_KEY: Langfuse 프로젝트 Secret Key
+#   - LANGFUSE_BASE_URL: Langfuse 리전 URL (예: https://jp.cloud.langfuse.com)
 
 name: Policy Compass Agent CD
 
@@ -194,6 +197,10 @@ jobs:
             BIZINFO_API_URL=${{ secrets.BIZINFO_API_URL }}
             SUPABASE_URL=${{ secrets.SUPABASE_URL }}
             SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}
+            LANGFUSE_PUBLIC_KEY=${{ secrets.LANGFUSE_PUBLIC_KEY }}
+            LANGFUSE_SECRET_KEY=${{ secrets.LANGFUSE_SECRET_KEY }}
+            LANGFUSE_BASE_URL=${{ secrets.LANGFUSE_BASE_URL || 'https://jp.cloud.langfuse.com' }}
+            LANGFUSE_TRACING_ENVIRONMENT=production
             ENV_EOF
             echo "✅ .env 파일 생성 완료!"
 
