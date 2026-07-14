@@ -10,6 +10,14 @@ import httpx
 
 from app.core.config import get_settings
 from app.core.http import log_external_api_error
+from app.core.regions import (
+    SIDO_CODE_PREFIXES,
+    region_distance_km,
+    resolve_region,
+    youth_local_authority_region_label,
+    youth_policy_region_scope,
+    youth_region_label,
+)
 from app.tools.schemas import YouthPolicyItem, YouthPolicySearchInput
 
 logger = logging.getLogger(__name__)
@@ -41,25 +49,22 @@ _POLICY_TOPIC_ALIASES = (
     (("금융지원", "자산형성", "복지지원", "생활지원", "문화지원", "금융", "복지", "문화"), "복지"),
     (("청년참여", "청년권리", "정책참여", "참여", "권리", "기반"), "참여"),
 )
-_REGION_PREFIXES = {
-    "서울": "11",
-    "부산": "26",
-    "대구": "27",
-    "인천": "28",
-    "광주": "29",
-    "대전": "30",
-    "울산": "31",
-    "세종": "36",
-    "경기": "41",
-    "충북": "43",
-    "충남": "44",
-    "전남": "46",
-    "경북": "47",
-    "경남": "48",
-    "제주": "50",
-    "강원": "51",
-    "전북": "52",
-}
+_REGION_PREFIXES = SIDO_CODE_PREFIXES
+_NEARBY_RESULT_LIMIT = 3
+_FETCH_ATTEMPTS = 2
+
+
+class YouthCenterAPIUnavailableError(RuntimeError):
+    """The official Youth Center API could not provide a valid response."""
+
+
+def youth_policy_fallback_guide(reason: str) -> YouthPolicyItem:
+    return YouthPolicyItem(
+        policy_id="youthcenter-guide",
+        title="온통청년 청년정책 조회 안내",
+        organization="온통청년",
+        fallback_reason=reason,
+    )
 
 
 def _compact_text(value: str | None) -> str | None:
@@ -102,7 +107,7 @@ def normalize_youth_policy_items(xml_text: str) -> list[YouthPolicyItem]:
             policy_id=_first(values, "bizId", "plcyNo", "policyId", "id") or str(idx),
             title=title,
             organization=_first(values, "cnsgNmor", "sprvsnInstCdNm", "operInstCdNm", "operOrgan", "organization"),
-            region=_first(values, "polyBizSecd", "zipCd", "regionNm", "region"),
+            region=_effective_region_label(values) or _first(values, "regionNm", "region", "polyBizSecd"),
             target_summary=_first(values, "ageInfo", "plcySprtTrgtCn", "target", "rqutPrdCn"),
             support_summary=_first(values, "sporCn", "plcySprtCn", "support", "content"),
             business_period=_business_period(values),
@@ -143,7 +148,7 @@ def normalize_youth_policy_json(payload: dict[str, Any]) -> list[YouthPolicyItem
                     "rgtrInstCdNm",
                     "rgtrHghrkInstCdNm",
                 ),
-                region=_region_label(_first(values, "zipCd", "regionNm", "region")),
+                region=_effective_region_label(values) or _first(values, "regionNm", "region"),
                 target_summary=" / ".join(part for part in target_parts if part) or None,
                 support_summary=_first(values, "plcySprtCn", "plcyExplnCn", "support"),
                 business_period=_business_period(values),
@@ -162,6 +167,8 @@ def _age_summary(values: dict[str, str | None]) -> str | None:
         return "연령 제한 없음"
     minimum = values.get("sprtTrgtMinAge")
     maximum = values.get("sprtTrgtMaxAge")
+    if minimum == "0" and maximum == "0":
+        return "연령 제한 없음"
     if minimum and maximum:
         return f"만 {minimum}~{maximum}세"
     return None
@@ -192,16 +199,21 @@ def _business_period(values: dict[str, str | None]) -> str | None:
 
 
 def _region_label(zip_codes: str | None) -> str | None:
-    if not zip_codes:
-        return None
-    matched = [
-        name
-        for name, prefix in _REGION_PREFIXES.items()
-        if any(code.startswith(prefix) for code in zip_codes.split(","))
-    ]
-    if len(matched) >= 15:
-        return "전국"
-    return ", ".join(matched) or zip_codes
+    return youth_region_label(zip_codes)
+
+
+def _effective_region_label(values: dict[str, str | None]) -> str | None:
+    zip_label = _region_label(values.get("zipCd"))
+    if zip_label != "전국":
+        return zip_label
+
+    authority_region = youth_local_authority_region_label(
+        values.get("rgtrInstCdNm"),
+        values.get("rgtrHghrkInstCdNm"),
+        values.get("sprvsnInstCdNm"),
+        values.get("operInstCdNm"),
+    )
+    return authority_region or zip_label
 
 
 def _filter_youth_policies_by_region(
@@ -210,12 +222,38 @@ def _filter_youth_policies_by_region(
 ) -> list[YouthPolicyItem]:
     if not region:
         return items
-    prefix = next((code for name, code in _REGION_PREFIXES.items() if name in region), None)
-    if not prefix:
-        return items
     return [
-        item for item in items if any(code.startswith(prefix) for code in str(item.raw.get("zipCd") or "").split(","))
+        item
+        for item in items
+        if youth_policy_region_scope(region, str(item.raw.get("zipCd") or ""), item.region) in {"exact", "nationwide"}
     ]
+
+
+def _mark_youth_region_matches(items: list[YouthPolicyItem], region: str | None) -> list[YouthPolicyItem]:
+    marked: list[YouthPolicyItem] = []
+    for item in items:
+        scope = youth_policy_region_scope(region, str(item.raw.get("zipCd") or ""), item.region)
+        if scope not in {"exact", "nationwide"}:
+            continue
+        marked.append(item.model_copy(update={"match_scope": scope, "distance_km": None}))
+    return marked
+
+
+def _nearby_youth_policies(items: list[YouthPolicyItem], region: str | None) -> list[YouthPolicyItem]:
+    nearby: list[YouthPolicyItem] = []
+    for item in items:
+        scope = youth_policy_region_scope(region, str(item.raw.get("zipCd") or ""), item.region)
+        if scope != "mismatch":
+            continue
+        distance = region_distance_km(region, [item.region] if item.region else [])
+        if distance is None:
+            continue
+        nearby.append(item.model_copy(update={"match_scope": "nearby", "distance_km": distance}))
+
+    unique: dict[str, YouthPolicyItem] = {}
+    for item in sorted(nearby, key=lambda candidate: candidate.distance_km or float("inf")):
+        unique.setdefault(item.policy_id, item)
+    return list(unique.values())[:_NEARBY_RESULT_LIMIT]
 
 
 def _filter_active_youth_policies(
@@ -225,6 +263,9 @@ def _filter_active_youth_policies(
     reference_date = today or date.today()
     active: list[YouthPolicyItem] = []
     for item in items:
+        application_end_date = _latest_date_in_period(item.application_period)
+        if application_end_date and application_end_date < reference_date:
+            continue
         if not item.business_end_date:
             active.append(item)
             continue
@@ -236,6 +277,20 @@ def _filter_active_youth_policies(
         if end_date >= reference_date:
             active.append(item)
     return active
+
+
+def _latest_date_in_period(value: str | None) -> date | None:
+    if not value:
+        return None
+
+    parsed: list[date] = []
+    pattern = re.compile(r"(?<!\d)(20\d{2})(?:[.\-/년]\s*)?(\d{1,2})(?:[.\-/월]\s*)?(\d{1,2})(?:일)?(?!\d)")
+    for year, month, day in pattern.findall(value):
+        try:
+            parsed.append(date(int(year), int(month), int(day)))
+        except ValueError:
+            continue
+    return max(parsed) if parsed else None
 
 
 def is_generic_youth_policy_query(value: str | None) -> bool:
@@ -294,8 +349,8 @@ class YouthCenterRepository:
 
     async def search(self, query: YouthPolicySearchInput) -> list[YouthPolicyItem]:
         if not self._settings.youthcenter_policy_api_key:
-            logger.warning("YOUTHCENTER_POLICY_API_KEY is not configured; returning no youth policy results.")
-            return []
+            logger.warning("YOUTHCENTER_POLICY_API_KEY is not configured; returning an availability guide.")
+            return [youth_policy_fallback_guide("온통청년 API 키가 설정되지 않아 현재 조회할 수 없어요.")]
 
         base_params = {
             "apiKeyNm": self._settings.youthcenter_policy_api_key,
@@ -303,25 +358,49 @@ class YouthCenterRepository:
             "pageSize": str(min(max(query.page_size * 20, 50), 100) if query.region else query.page_size),
         }
         api_url = self._settings.youthcenter_policy_api_url or OFFICIAL_YOUTH_POLICY_API_URL
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept": "application/json,*/*",
-            "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
-        }
+        successful_fetches = 0
+        failed_fetches = 0
 
-        async with httpx.AsyncClient(timeout=10, follow_redirects=False, headers=headers) as client:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+            nearby_pool: list[YouthPolicyItem] = []
+            resolved_region = resolve_region(query.region)
+
+            async def fetch_active(params: dict[str, str]) -> list[YouthPolicyItem]:
+                nonlocal failed_fetches, successful_fetches
+                try:
+                    items = await self._fetch(client, api_url, params)
+                except YouthCenterAPIUnavailableError:
+                    failed_fetches += 1
+                    return []
+                successful_fetches += 1
+                return _filter_active_youth_policies(items)
+
             for search_term in _build_youth_search_terms(query):
                 params = dict(base_params)
                 if search_term:
                     params["plcyNm"] = search_term
-                items = await self._fetch(client, api_url, params)
-                items = _filter_youth_policies_by_region(items, query.region)
-                items = _filter_active_youth_policies(items)
-                if items:
-                    return items[: query.page_size]
+
+                if resolved_region and resolved_region.youth_code:
+                    exact_params = {**params, "zipCd": resolved_region.youth_code}
+                    exact_items = await fetch_active(exact_params)
+                    exact_matches = _mark_youth_region_matches(exact_items, query.region)
+                    if exact_matches:
+                        return exact_matches[: query.page_size]
+
+                broad_items = await fetch_active(params)
+                primary_matches = _mark_youth_region_matches(broad_items, query.region)
+                if primary_matches:
+                    return primary_matches[: query.page_size]
+                nearby_pool.extend(_nearby_youth_policies(broad_items, query.region))
+
+        if nearby_pool:
+            return _nearby_youth_policies(nearby_pool, query.region)
+        if failed_fetches and not successful_fetches:
+            return [
+                youth_policy_fallback_guide(
+                    "온통청년 API가 일시적으로 응답하지 않아 정책 유무를 확인하지 못했어요. 잠시 후 다시 검색해주세요."
+                )
+            ]
         return []
 
     async def _fetch(
@@ -330,26 +409,35 @@ class YouthCenterRepository:
         api_url: str,
         params: dict[str, str],
     ) -> list[YouthPolicyItem]:
-        try:
-            response = await client.get(api_url, params=params)
-            response.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            log_external_api_error(logger, "온통청년 API", exc)
-            return []
+        response: httpx.Response | None = None
+        last_error: Exception | None = None
+        for _attempt in range(_FETCH_ATTEMPTS):
+            try:
+                response = await client.get(api_url, params=params)
+                response.raise_for_status()
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                response = None
+
+        if response is None:
+            assert last_error is not None
+            log_external_api_error(logger, "온통청년 API", last_error)
+            raise YouthCenterAPIUnavailableError from last_error
 
         if "json" in response.headers.get("content-type", "").lower() or response.text.lstrip().startswith("{"):
             try:
                 payload = response.json()
             except ValueError:
                 logger.warning("온통청년 JSON 파싱 실패")
-                return []
+                raise YouthCenterAPIUnavailableError from None
             if str(payload.get("resultCode")) != "200":
                 logger.warning("온통청년 API 비정상 응답 (result_code=%s)", payload.get("resultCode"))
-                return []
+                raise YouthCenterAPIUnavailableError
             return normalize_youth_policy_json(payload)
 
         try:
             return normalize_youth_policy_items(response.text)
         except ET.ParseError:
             logger.warning("온통청년 XML 파싱 실패")
-            return []
+            raise YouthCenterAPIUnavailableError from None

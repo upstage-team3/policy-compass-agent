@@ -4,26 +4,7 @@ import re
 from typing import Any
 
 from app.core.prompts import GENERAL_REPLY
-
-REGIONS = [
-    "서울",
-    "부산",
-    "대구",
-    "인천",
-    "광주",
-    "대전",
-    "울산",
-    "세종",
-    "경기",
-    "강원",
-    "충북",
-    "충남",
-    "전북",
-    "전남",
-    "경북",
-    "경남",
-    "제주",
-]
+from app.core.regions import user_region_reference
 
 ENTREPRENEUR_KEYWORDS = ["창업", "스타트업", "사업을 시작", "사업 시작"]
 JOB_SEEKING_KEYWORDS = ["구직", "취업 준비", "미취업", "취업활동", "일자리"]
@@ -61,6 +42,7 @@ RECOMMEND_KEYWORDS = [
 
 INTEREST_KEYWORDS = {
     "데이터 분석": ["데이터 분석", "데이터", "분석가", "분석"],
+    "클라우드 엔지니어": ["클라우드", "AWS", "Azure", "DevOps"],
     "AI": ["AI", "인공지능", "머신러닝"],
     "IT": ["IT", "개발", "프로그래밍", "소프트웨어", "앱"],
     "요식업": ["요식업", "카페", "음식점", "식당"],
@@ -98,6 +80,7 @@ def extract_training_search_keyword(text: str) -> str | None:
         (("빅데이터",), "빅데이터"),
         (("인공지능",), "인공지능"),
         (("AI",), "AI"),
+        (("클라우드",), "클라우드 엔지니어"),
         (("개발",), "개발"),
         (("프로그래밍",), "프로그래밍"),
         (("마케팅",), "마케팅"),
@@ -173,10 +156,8 @@ def heuristic_extract_profile(text: str) -> dict[str, Any]:
     if age_match:
         profile["age"] = int(next(group for group in age_match.groups() if group))
 
-    for region in REGIONS:
-        if region in text:
-            profile["region"] = region
-            break
+    if region := user_region_reference(text):
+        profile["region"] = region
 
     if any(keyword in text for keyword in JOB_SEEKING_KEYWORDS):
         profile["employment_status"] = "unemployed_seeking_job"

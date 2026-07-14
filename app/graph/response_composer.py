@@ -117,7 +117,11 @@ async def compose_clarification_reply(
             logger.info("LLM 미설정으로 조건 확인 템플릿을 사용합니다.")
         except Exception:  # noqa: BLE001
             logger.exception("조건 확인 LLM 호출 실패, 템플릿으로 폴백합니다.")
-    return "정확한 결과를 찾기 위해 " + ", ".join(labels) + "을 알려주시겠어요?"
+    return clarification_template(labels)
+
+
+def clarification_template(labels: list[str]) -> str:
+    return "정확한 결과를 찾으려면 다음 정보가 필요해요: " + ", ".join(labels) + "."
 
 
 async def compose_grounded_results(
@@ -264,15 +268,39 @@ async def compose_conversation_reply(
 
 
 def compose_scored_template(scored: list[dict]) -> str:
-    lines = [
-        "현재 파악한 조건을 바탕으로 확인해볼 만한 지원사업을 정리했어요.",
-        "최종 신청 가능 여부는 공고별 세부 조건에 따라 달라질 수 있어요.",
-    ]
+    nearby_only = bool(scored) and all(item.get("recommendation_scope") == "nearby_reference" for item in scored)
+    if nearby_only:
+        lines = [
+            "요청 지역에 정확히 일치하거나 전국 대상인 지원사업은 찾지 못했어요.",
+            "아래는 가까운 지역 참고 결과이며, 거주 요건 때문에 신청하지 못할 수 있어요.",
+        ]
+    else:
+        lines = [
+            "현재 파악한 조건을 바탕으로 확인해볼 만한 지원사업을 정리했어요.",
+            "최종 신청 가능 여부는 공고별 세부 조건에 따라 달라질 수 있어요.",
+        ]
     for idx, item in enumerate(scored, start=1):
         policy = item["policy"]
+        scope_label = {
+            "exact": "요청 지역 일치",
+            "nationwide": "전국 대상",
+            "nearby_reference": "인접 지역 참고",
+        }.get(item.get("recommendation_scope"), "대상 지역 확인 필요")
         lines.append("")
         lines.append(f"{idx}. {policy['title']} ({policy['agency']})")
-        lines.append(f"   - 추천 이유: {' '.join(item['match_reasons']) or '입력 조건과 일부 항목이 맞습니다.'}")
+        lines.append(f"   - 추천 범위: {scope_label}")
+        reason_label = "참고 이유" if nearby_only else "추천 이유"
+        lines.append(f"   - {reason_label}: {' '.join(item['match_reasons'])}")
+        if not nearby_only:
+            lines.append(
+                "   - 추천 적합도: "
+                f"{round(item['match_score'] * 100)}점 / 근거 확인률 "
+                f"{round(item['evidence_coverage'] * 100)}%"
+            )
+        if policy.get("region"):
+            lines.append(f"   - 대상 지역: {', '.join(policy['region'])}")
+        if nearby_only and policy.get("distance_km") is not None:
+            lines.append(f"   - 거리: 대표 좌표 기준 약 {policy['distance_km']:g}km(직선거리)")
         lines.append(f"   - 지원 대상: {policy['target_description']}")
         lines.append(f"   - 지원 내용: {policy['support_content']}")
         lines.append(
@@ -290,9 +318,24 @@ def compose_scored_template(scored: list[dict]) -> str:
 
 
 def compose_youth_policy_response(items: list[dict]) -> str:
-    lines = [
-        "현재 조건에서 확인해볼 만한 청년지원사업을 찾았어요. 우선 세 가지를 살펴볼게요.",
-    ]
+    guide_items = [item for item in items if item.get("policy_id") == "youthcenter-guide"]
+    if guide_items:
+        return (
+            "온통청년 공식 API에서 정책 데이터를 확인하지 못했어요.\n"
+            "정책이 없다고 판단한 것은 아니며, 연결 상태를 확인한 뒤 다시 검색해야 해요.\n\n"
+            f"데이터 안내: {guide_items[0].get('fallback_reason') or '일시적인 API 응답 실패'}"
+        )
+
+    nearby_only = bool(items) and all(item.get("match_scope") == "nearby" for item in items)
+    if nearby_only:
+        lines = [
+            "요청 지역에 정확히 일치하거나 전국 대상인 청년정책은 찾지 못했어요.",
+            "아래는 가까운 지역 참고 결과이며, 해당 지역 거주 요건 때문에 신청하지 못할 수 있어요.",
+        ]
+    else:
+        lines = [
+            "현재 조건에서 확인해볼 만한 청년지원사업을 찾았어요. 우선 세 가지를 살펴볼게요.",
+        ]
     for idx, item in enumerate(items[:3], start=1):
         lines.append("")
         lines.append(f"{idx}. {item['title']}")
@@ -300,6 +343,8 @@ def compose_youth_policy_response(items: list[dict]) -> str:
             lines.append(f"   - 운영/주관: {item['organization']}")
         if item.get("region"):
             lines.append(f"   - 지역: {item['region']}")
+        if nearby_only and item.get("distance_km") is not None:
+            lines.append(f"   - 거리: 대표 좌표 기준 약 {item['distance_km']:g}km(직선거리)")
         lines.append(f"   - 지원 대상: {item.get('target_summary') or '공식 공고 확인 필요'}")
         lines.append(f"   - 지원 내용: {item.get('support_summary') or '공식 공고 확인 필요'}")
         if item.get("business_period"):
@@ -324,7 +369,10 @@ def compose_youth_policy_response(items: list[dict]) -> str:
         if item.get("fallback_reason"):
             lines.append(f"   - 데이터 안내: {item['fallback_reason']}")
     lines.append("")
-    lines.append("최종 자격과 신청 가능 여부는 공고 원문 또는 담당 기관에서 꼭 확인해주세요.")
+    if nearby_only:
+        lines.append("가까운 지역 정보는 참고용이며, 거주 요건은 공고 원문에서 먼저 확인해주세요.")
+    else:
+        lines.append("최종 자격과 신청 가능 여부는 공고 원문 또는 담당 기관에서 꼭 확인해주세요.")
     return "\n".join(lines)
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -49,6 +51,8 @@ class YouthPolicyItem(BaseModel):
     application_method: str | None = None
     detail_url: str | None = None
     fallback_reason: str | None = None
+    match_scope: Literal["exact", "nationwide", "nearby", "unknown"] = "unknown"
+    distance_km: float | None = None
     raw: dict = Field(default_factory=dict)
 
 

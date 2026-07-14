@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from app.core.llm import LLMUnavailableError, SolarLLMClient, extract_json
 from app.core.prompts import OUT_OF_SCOPE_REPLY, PROFILE_EXTRACTION_SYSTEM_PROMPT, ROUTER_SYSTEM_PROMPT
+from app.core.regions import resolve_region, user_region_reference
 from app.graph.contracts import VALID_REQUEST_KINDS, RoutingDecision
 from app.graph.fallbacks import (
     classify_request_kind as _classify_request_kind,
@@ -206,6 +207,15 @@ async def profile_extractor_node(state: AgentState) -> dict[str, Any]:
     if not extracted:
         extracted = _heuristic_extract_profile(user_input)
 
+    # 지역은 LLM이 known_profile이나 상식으로 시·도를 보완하지 못하게 현재 발화의
+    # 공식 행정구역 표현만 다시 읽어 덮어쓴다. 모호한 고성군·중구는 그대로 남겨
+    # Missing Slot 단계가 시·도 확인 질문을 하도록 한다.
+    explicit_region = user_region_reference(user_input)
+    if explicit_region:
+        extracted["region"] = explicit_region
+    else:
+        extracted.pop("region", None)
+
     broad_policy_request = is_generic_youth_policy_query(user_input)
     if broad_policy_request:
         extracted.pop("policy_topic", None)
@@ -236,29 +246,41 @@ async def missing_slot_node(state: AgentState) -> dict[str, Any]:
     request_kind = state.get("request_kind") or profile.get("request_kind") or "youth_policy"
     missing: list[str] = []
 
-    if state.get("response_mode") == "explain":
+    topic_listing_explanation = request_kind == "youth_policy" and bool(profile.get("policy_topic"))
+    if state.get("response_mode") == "explain" and not topic_listing_explanation:
         return {"missing_slots": []}
+
+    region = profile.get("region")
+    unresolved_region = bool(region and resolve_region(region) is None)
 
     if request_kind == "training":
         if not state.get("search_query") and not profile.get("desired_job") and not profile.get("interest_fields"):
             missing.append("desired_job")
-        if not profile.get("region"):
+        if not region:
             missing.append("training_region")
+        elif unresolved_region:
+            missing.append("region_detail")
     elif request_kind == "recruitment":
         if not state.get("search_query") and not profile.get("desired_job") and not profile.get("interest_fields"):
             missing.append("desired_job")
-        if not profile.get("region"):
+        if not region:
             missing.append("work_region")
+        elif unresolved_region:
+            missing.append("region_detail")
     elif request_kind == "business":
-        if not profile.get("region"):
+        if not region:
             missing.append("region")
+        elif unresolved_region:
+            missing.append("region_detail")
         if profile.get("is_entrepreneur") is None:
             missing.append("business_status")
         elif profile.get("is_entrepreneur") and profile.get("has_registered_business") is None:
             missing.append("business_registration")
     else:
-        if not profile.get("region"):
+        if not region:
             missing.append("region")
+        elif unresolved_region:
+            missing.append("region_detail")
         if profile.get("age") is None:
             missing.append("age")
         policy_topic = profile.get("policy_topic")
@@ -424,8 +446,21 @@ async def policy_search_node(state: AgentState) -> dict[str, Any]:
 async def eligibility_scorer_node(state: AgentState) -> dict[str, Any]:
     profile = state.get("profile") or {}
     scored = [score_policy(profile, policy) for policy in state.get("search_results", [])]
-    scored.sort(key=lambda item: item["match_score"], reverse=True)
-    return {"scored_results": scored[:5]}
+    recommended = [item for item in scored if item["is_recommendable"]]
+    recommended.sort(
+        key=lambda item: (item["match_score"], item["evidence_coverage"]),
+        reverse=True,
+    )
+    if recommended:
+        return {"scored_results": recommended[:5]}
+
+    nearby = [
+        item
+        for item in scored
+        if item["recommendation_scope"] == "nearby_reference" and item["deadline_status"] != "마감"
+    ]
+    nearby.sort(key=lambda item: item["policy"].get("distance_km") or float("inf"))
+    return {"scored_results": nearby[:3]}
 
 
 # ---------------------------------------------------------------------------
@@ -470,6 +505,8 @@ async def response_node(state: AgentState) -> dict[str, Any]:
         return {"final_response": _compose_recruitment_response(recruitment_items)}
 
     if youth_policies:
+        if any(item.get("policy_id") == "youthcenter-guide" for item in youth_policies):
+            return {"final_response": _compose_youth_policy_response(youth_policies)}
         generated = await compose_grounded_results(
             _llm,
             user_input=original_request,

@@ -3,6 +3,29 @@ from __future__ import annotations
 import json
 import uuid
 
+import pytest
+
+from app.api.routes import chat as chat_routes
+from app.api.routes.chat import _result_status_message
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        ({"request_kind": "youth_policy"}, "청년정책 검색 결과를 확인했어요."),
+        ({"request_kind": "training"}, "고용24 훈련과정 검색 결과를 확인했어요."),
+        ({"request_kind": "recruitment"}, "채용 보조정보 검색 결과를 확인했어요."),
+        (
+            {"request_kind": "business", "missing_slots": ["region"]},
+            "기업마당 지원사업 추천에 필요한 조건을 정리했어요.",
+        ),
+        ({"request_kind": "general", "intent": "EXPLAIN"}, "질문에 맞는 설명을 정리했어요."),
+        ({"request_kind": "general", "intent": "OUT_OF_SCOPE"}, "지원 가능한 상담 범위를 확인했어요."),
+    ],
+)
+def test_result_status_message_uses_router_result_and_missing_slots(result, expected):
+    assert _result_status_message(result) == expected
+
 
 def test_health(client):
     res = client.get("/api/health")
@@ -85,6 +108,23 @@ def test_chat_persists_profile_across_turns(client):
     assert body["missing_slots"] == []
 
 
+def test_chat_uses_browser_profile_defaults_in_a_new_session(client):
+    res = client.post(
+        "/api/chat",
+        json={
+            "session_id": str(uuid.uuid4()),
+            "message": "청년 주거 지원 정책에 대해 알려줘",
+            "profile_defaults": {"region": "경기", "age": 24},
+        },
+    )
+    body = res.json()
+
+    assert res.status_code == 200
+    assert body["profile"]["region"] == "경기"
+    assert body["profile"]["age"] == 24
+    assert body["missing_slots"] == []
+
+
 def test_chat_out_of_scope_request(client):
     session_id = str(uuid.uuid4())
     res = client.post("/api/chat", json={"session_id": session_id, "message": "세무 상담 좀 해줄 수 있어?"})
@@ -104,11 +144,32 @@ def test_chat_stream_emits_sse_events(client):
     assert "event: token" in body
     assert "event: status" in body
     assert "event: done" in body
+    assert "청년정책 추천에 필요한 조건을 정리했어요." in body
 
     done_line = [line for line in body.splitlines() if line.startswith("data:")][-1]
     done_payload = json.loads(done_line.removeprefix("data:").strip())
     assert done_payload["type"] == "done"
     assert done_payload["recommendations"] == []
+    assert done_payload["profile_defaults"]["region"] == "서울"
+
+
+def test_chat_stream_emits_safe_error_event_when_agent_fails(client, monkeypatch):
+    async def fail_agent(_payload):
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr(chat_routes, "_run_agent", fail_agent)
+
+    with client.stream(
+        "POST",
+        "/api/chat/stream",
+        json={"session_id": str(uuid.uuid4()), "message": "서울 청년정책 찾아줘"},
+    ) as res:
+        body = "".join(res.iter_text())
+
+    assert res.status_code == 200
+    assert "event: error" in body
+    assert "일시적인 오류가 발생했어요. 잠시 후 다시 시도해주세요." in body
+    assert "simulated failure" not in body
 
 
 def test_chat_training_question_returns_training_fallback(client):
