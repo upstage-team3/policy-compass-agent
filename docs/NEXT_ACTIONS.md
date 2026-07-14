@@ -46,6 +46,8 @@
 - [x] 채팅 응답에서 Markdown·내부 필드명·형식적 머리말 제거
 - [x] 실제 누락 신청 정보만 안내하고 자격 확인 문구 중복 제거
 - [x] 종료된 온통청년 정책 제외 및 구체 검색어의 무관한 분야 완화 차단
+- [x] 월세·전세·금융 하위 유형 무결과 시 상위 분야·인접 지역 대체 없이 무결과 안내
+- [x] `경기도 말고 서울로` 지역 정정과 도 단위 조건의 시 전용 정책 오추천 차단
 - [x] 종료된 신청기간 필터와 `0~0세` 연령 제한 없음 정규화
 - [x] 전체 평가 기준 기반 점수와 근거 확인률 분리, 지역·연령·사업자 하드 불일치 제외
 - [x] 인접 지역 결과를 점수 0점 참고 결과로 분리하고 거리·거주 요건 표시
@@ -62,7 +64,8 @@
 
 - [x] Supabase `chat_logs`, `chat_sessions` 스키마와 RLS 적용
 - [x] 최근 메시지 8개, 프로필, `pending_request` 저장·복원
-- [x] 주민번호·카드번호 형태 마스킹과 메시지 길이 제한
+- [x] 주민번호·외국인등록번호·연락처·이메일·계좌·카드 형태의 브라우저 전송 전 및 서버 입력 단계 차단
+- [x] 민감정보 차단 요청의 LangGraph·LLM·외부 API·Langfuse 호출 방지와 구조화 메모리 재귀 마스킹
 - [x] `SUPABASE_URL`, 서버용 secret/service_role `SUPABASE_KEY`를 CD에 전달
 - [x] 실제 Supabase 저장·복원 smoke test
 - [x] 브라우저 표시 기록의 민감정보 마스킹과 최근 20개 채팅·채팅별 50개 메시지 제한
@@ -76,13 +79,21 @@
 
 - [x] `git diff`에서 코드와 문서 변경 범위 확인
 - [x] Ruff lint/format 통과
-- [x] pytest `149 passed` 유지
+- [x] pytest `164 passed` 유지
 - [x] 프런트엔드 프로덕션 빌드 통과
-- [x] 프런트엔드 저장·복원 회귀 테스트 `7 passed`
+- [x] 프런트엔드 저장·복원·전송 전 개인정보 차단 회귀 테스트 `8 passed`
 - [x] 최신 main `a89d1e3` CI 성공
 - [x] 후속 CD 성공 및 Google Cloud 내부 헬스체크 통과
 - [ ] 외부 `/`, `/api/health`, `/docs` 확인
 - [ ] 배포본에서 API별 대표 질문 확인
+
+## P5. Langfuse 관측성
+
+- [x] LangGraph callback과 세션별 Trace context 연결
+- [x] 키 미설정 시 no-op, 앱 종료 시 pending trace flush
+- [x] 합성 질문으로 Router·Tool·Response Trace 생성 및 flush 성공
+- [ ] Langfuse 대시보드에서 Trace 상세 화면 수동 확인
+- [ ] 운영 배포 환경에 Langfuse secret 주입 방식 결정
 
 ## 검증 명령
 

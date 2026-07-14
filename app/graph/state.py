@@ -31,3 +31,4 @@ class AgentState(TypedDict, total=False):
     scored_results: list[dict]
     final_response: str
     guardrail_notes: list[str]
+    privacy_blocked: bool

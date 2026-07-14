@@ -52,6 +52,20 @@ _POLICY_TOPIC_ALIASES = (
 _REGION_PREFIXES = SIDO_CODE_PREFIXES
 _NEARBY_RESULT_LIMIT = 3
 _FETCH_ATTEMPTS = 2
+_BROAD_POLICY_TOPIC_MARKERS = (
+    "취업지원",
+    "구직지원",
+    "일자리",
+    "거주지원",
+    "주거지원",
+    "주거정책",
+    "교육지원",
+    "직업훈련",
+    "복지지원",
+    "청년참여",
+    "정책참여",
+)
+_NARROW_POLICY_TOPIC_MARKERS = ("월세", "전세", "주거비", "금융", "자산형성", "문화", "건강")
 
 
 class YouthCenterAPIUnavailableError(RuntimeError):
@@ -309,6 +323,21 @@ def is_generic_youth_policy_query(value: str | None) -> bool:
     return any(phrase in compact for phrase in broad_phrases)
 
 
+def is_narrow_youth_policy_query(value: str | None) -> bool:
+    """구체 하위 유형·정책명이라 상위 분야로 완화하면 안 되는 검색인지 판정한다."""
+
+    if not value or is_generic_youth_policy_query(value):
+        return False
+    compact = re.sub(r"\s+", "", value)
+    if compact in {"주거", "취업", "교육", "훈련", "복지", "참여", "금융·복지·문화", "금융복지문화"}:
+        return False
+    if any(marker in compact for marker in _NARROW_POLICY_TOPIC_MARKERS):
+        return True
+    if any(marker in compact for marker in _BROAD_POLICY_TOPIC_MARKERS):
+        return False
+    return True
+
+
 def _build_youth_search_terms(query: YouthPolicySearchInput) -> list[str | None]:
     """Build progressively broader title searches for the current Youth Center API."""
 
@@ -316,6 +345,7 @@ def _build_youth_search_terms(query: YouthPolicySearchInput) -> list[str | None]
     recognized_topic = False
     keyword = " ".join(query.keywords.split()).strip()
     has_specific_keyword = bool(keyword and not is_generic_youth_policy_query(keyword))
+    keep_specific_scope = has_specific_keyword and is_narrow_youth_policy_query(keyword)
     candidates = (
         [query.keywords] if has_specific_keyword else [query.keywords, *query.support_types, *query.interest_fields]
     )
@@ -326,6 +356,9 @@ def _build_youth_search_terms(query: YouthPolicySearchInput) -> list[str | None]
             continue
         if not is_generic_youth_policy_query(normalized) and normalized not in terms:
             terms.append(normalized[:50])
+
+        if keep_specific_scope and candidate == query.keywords:
+            continue
 
         compact = re.sub(r"\s+", "", normalized)
         for aliases, topic in _POLICY_TOPIC_ALIASES:
@@ -360,6 +393,7 @@ class YouthCenterRepository:
         api_url = self._settings.youthcenter_policy_api_url or OFFICIAL_YOUTH_POLICY_API_URL
         successful_fetches = 0
         failed_fetches = 0
+        allow_nearby_results = not is_narrow_youth_policy_query(query.keywords)
 
         async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
             nearby_pool: list[YouthPolicyItem] = []
@@ -391,7 +425,8 @@ class YouthCenterRepository:
                 primary_matches = _mark_youth_region_matches(broad_items, query.region)
                 if primary_matches:
                     return primary_matches[: query.page_size]
-                nearby_pool.extend(_nearby_youth_policies(broad_items, query.region))
+                if allow_nearby_results:
+                    nearby_pool.extend(_nearby_youth_policies(broad_items, query.region))
 
         if nearby_pool:
             return _nearby_youth_policies(nearby_pool, query.region)

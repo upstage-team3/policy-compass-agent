@@ -126,7 +126,7 @@ export default function ChatInput({ onSend, disabled }: Props) {
       </div>
 
       <div style={{ textAlign: "center", marginTop: "8px", fontSize: "11px", color: "#8a90a3" }}>
-        정책나침반은 공공데이터를 기반으로 정보를 제공합니다. 최신 정보는 공식 사이트에서 확인해 주세요.
+        주민등록번호·연락처·계좌번호는 입력하지 마세요. 감지된 민감정보는 전송하지 않고 삭제 처리합니다.
       </div>
     </div>
   );

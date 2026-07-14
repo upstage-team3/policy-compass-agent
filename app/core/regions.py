@@ -373,6 +373,21 @@ def resolve_region(value: str | None) -> RegionResolution | None:
 def user_region_reference(value: str | None) -> str | None:
     """사용자가 실제로 말한 지역을 추정 없이 표준 검색 문자열로 만든다."""
 
+    # 지역을 정정하는 문장에서는 부정된 기존 지역보다 정정 대상이 우선한다.
+    # 예: "경기도 말고 서울로"를 문장 전체 길이로만 비교하면 "경기도"가
+    # 선택되므로, 전환 표현 뒤쪽을 먼저 해석한다.
+    if value:
+        correction_matches = list(re.finditer(r"말고|아니라|아니고|대신", value))
+        if correction_matches:
+            correction_target = value[correction_matches[-1].end() :]
+            resolved_target = resolve_region(correction_target)
+            if resolved_target:
+                return (
+                    f"{resolved_target.sido} {resolved_target.sigungu}"
+                    if resolved_target.sigungu
+                    else resolved_target.sido
+                )
+
     resolved = resolve_region(value)
     if resolved:
         return f"{resolved.sido} {resolved.sigungu}" if resolved.sigungu else resolved.sido
@@ -626,6 +641,13 @@ def youth_policy_region_scope(
         return "unknown"
     if not codes:
         return "unknown"
+
+    # 시·도까지만 확인된 사용자를 특정 시·군·구 사업의 대상자로 간주하지 않는다.
+    # 예: "경기" 사용자에게 평택시 전용 사업을 경기 전체 정책처럼 추천하지 않는다.
+    if not user.sigungu and region_label:
+        policy_region = resolve_region(region_label)
+        if policy_region and policy_region.sigungu:
+            return "unknown"
 
     if user.youth_code:
         code_prefix = user.youth_code[:4]

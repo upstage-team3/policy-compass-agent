@@ -15,6 +15,8 @@ import logging
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
+from app.core.observability import create_langfuse_handler, langfuse_trace_context
+from app.core.privacy import detect_sensitive_data, privacy_guard_reply, redact_sensitive_text
 from app.graph.graph import get_agent_graph
 from app.repositories.chat_memory import SupabaseChatMemoryRepository
 from app.schemas.chat import ChatRequest, ChatTurnResponse, UserProfile
@@ -29,6 +31,9 @@ _chat_memory = SupabaseChatMemoryRepository()
 
 def _result_status_message(result: dict) -> str:
     """Return a user-facing progress message from the validated router result."""
+
+    if result.get("privacy_blocked"):
+        return "민감정보를 감지해 입력을 보호 처리했어요."
 
     request_kind = result.get("request_kind", "general")
     missing_slots = result.get("missing_slots") or []
@@ -52,25 +57,62 @@ def _result_status_message(result: dict) -> str:
 
 
 async def _run_agent(payload: ChatRequest) -> dict:
-    graph = get_agent_graph()
-    config = {"configurable": {"thread_id": payload.session_id}}
     memory = await _chat_memory.load(payload.session_id)
+    profile = payload.profile_defaults.model_dump(exclude_none=True) if payload.profile_defaults else {}
+    if memory.profile:
+        # 같은 채팅에서 확인한 조건이 브라우저 기본값보다 우선한다.
+        profile.update(memory.profile)
+
+    detected_sensitive_data = detect_sensitive_data(payload.message)
+    if detected_sensitive_data:
+        safe_message = redact_sensitive_text(payload.message)
+        reply = privacy_guard_reply(detected_sensitive_data)
+        await _chat_memory.save_turn(
+            session_id=payload.session_id,
+            user_message=safe_message,
+            assistant_message=reply,
+            intent="PRIVACY_BLOCKED",
+            profile=profile,
+            pending_request=memory.pending_request,
+        )
+        return {
+            "intent": "PRIVACY_BLOCKED",
+            "action": "RESPOND",
+            "response_mode": "out_of_scope",
+            "request_kind": "general",
+            "final_response": reply,
+            "profile": profile,
+            "pending_request": memory.pending_request,
+            "missing_slots": [],
+            "search_results": [],
+            "youth_policy_results": [],
+            "training_results": [],
+            "recruitment_results": [],
+            "scored_results": [],
+            "privacy_blocked": True,
+        }
+
+    graph = get_agent_graph()
+    config: dict = {
+        "configurable": {"thread_id": payload.session_id},
+        "run_name": "policy-compass-chat",
+    }
+    langfuse_handler = create_langfuse_handler()
+    if langfuse_handler is not None:
+        config["callbacks"] = [langfuse_handler]
     initial_state: dict = {
         "session_id": payload.session_id,
         "user_input": payload.message,
     }
     if memory.messages:
         initial_state["conversation_history"] = memory.messages
-    profile = payload.profile_defaults.model_dump(exclude_none=True) if payload.profile_defaults else {}
-    if memory.profile:
-        # 같은 채팅에서 확인한 조건이 브라우저 기본값보다 우선한다.
-        profile.update(memory.profile)
     if profile:
         initial_state["profile"] = profile
     if memory.pending_request:
         initial_state["pending_request"] = memory.pending_request
 
-    result = await graph.ainvoke(initial_state, config=config)
+    with langfuse_trace_context(payload.session_id, enabled=langfuse_handler is not None):
+        result = await graph.ainvoke(initial_state, config=config)
     await _chat_memory.save_turn(
         session_id=payload.session_id,
         user_message=payload.message,

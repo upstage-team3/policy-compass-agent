@@ -4,8 +4,11 @@ import { WELCOME_MESSAGE } from "./data"
 import { streamChat, toPolicyCard } from "./lib/api"
 import {
   clearProfileDefaults,
+  detectSensitiveData,
   loadChatState,
   loadProfileDefaults,
+  privacyGuardMessage,
+  sanitizeStoredText,
   saveChatState,
   saveProfileDefaults,
 } from "./lib/chatStorage"
@@ -115,11 +118,14 @@ export default function App() {
     // 채팅(Chat.id)을 백엔드 세션(LangGraph thread_id)으로 그대로 재사용해,
     // 같은 대화 안에서 프로필(지역/취업상태 등)이 누적되도록 한다.
     const sessionId = activeChatId
+    const detectedSensitiveData = detectSensitiveData(text)
+    const displayText =
+      detectedSensitiveData.length > 0 ? sanitizeStoredText(text) : text
 
     const userMsg: Message = {
       id: generateId(),
       role: "user",
-      content: text,
+      content: displayText,
       timestamp: new Date(),
     }
 
@@ -129,11 +135,28 @@ export default function App() {
         const isFirst = c.messages.filter((m) => m.role === "user").length === 0
         return {
           ...c,
-          title: isFirst ? generateTitle(text) : c.title,
+          title: isFirst ? generateTitle(displayText) : c.title,
           messages: [...c.messages, userMsg],
         }
       }),
     )
+
+    if (detectedSensitiveData.length > 0) {
+      const privacyReply: Message = {
+        id: generateId(),
+        role: "assistant",
+        content: privacyGuardMessage(detectedSensitiveData),
+        timestamp: new Date(),
+      }
+      setChats((prev) =>
+        prev.map((chat) =>
+          chat.id === activeChatId
+            ? { ...chat, messages: [...chat.messages, privacyReply] }
+            : chat,
+        ),
+      )
+      return
+    }
 
     setIsTyping(true)
     setTypingStatus("질문을 확인하고 있어요.")

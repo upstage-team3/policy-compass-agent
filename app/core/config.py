@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     supabase_url: str | None = None
     supabase_key: str | None = None
 
+    # Langfuse - 키가 모두 있을 때만 LangGraph tracing 활성화
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: str | None = None
+    langfuse_base_url: str = "https://cloud.langfuse.com"
+    langfuse_tracing_environment: str = "development"
+
     data_dir: Path = BASE_DIR / "data"
 
 

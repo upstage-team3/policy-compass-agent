@@ -11,7 +11,28 @@ const MAX_POLICY_CARDS_PER_MESSAGE = 10
 const MAX_MESSAGE_LENGTH = 4000
 const MAX_TITLE_LENGTH = 120
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/
-const SENSITIVE_PATTERNS = [/\b\d{6}-?[1-4]\d{6}\b/g, /\b(?:\d[ -]?){12,16}\b/g]
+const SENSITIVE_PATTERNS = [
+  {
+    label: "주민등록번호·외국인등록번호 형태",
+    pattern: /(?<!\d)\d{6}\s*-?\s*[1-8]\d{6}(?!\d)/g,
+  },
+  {
+    label: "전화번호 형태",
+    pattern: /(?<!\d)(?:\+82[ -]?)?0?1[016789][ -]?\d{3,4}[ -]?\d{4}(?!\d)/g,
+  },
+  {
+    label: "이메일 주소",
+    pattern: /(?<![\w.+-])[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?![\w.-])/g,
+  },
+  {
+    label: "계좌번호 형태",
+    pattern: /(?:계좌(?:번호)?|통장번호)\s*[:：]?\s*(?:\d[ -]?){8,20}/g,
+  },
+  {
+    label: "카드·금융번호 형태",
+    pattern: /(?<!\d)(?:\d[ -]?){13,19}(?!\d)/g,
+  },
+]
 
 export interface ChatState {
   chats: Chat[]
@@ -46,10 +67,32 @@ export function sanitizeStoredText(
   maxLength = MAX_MESSAGE_LENGTH,
 ): string {
   let sanitized = value.slice(0, maxLength)
-  for (const pattern of SENSITIVE_PATTERNS) {
-    sanitized = sanitized.replace(pattern, "[민감정보 삭제]")
+  for (const item of SENSITIVE_PATTERNS) {
+    sanitized = sanitized.replace(item.pattern, "[민감정보 삭제]")
   }
   return sanitized
+}
+
+export function detectSensitiveData(value: string): string[] {
+  const detected: string[] = []
+  let remaining = value
+  for (const item of SENSITIVE_PATTERNS) {
+    item.pattern.lastIndex = 0
+    if (!item.pattern.test(remaining)) continue
+    detected.push(item.label)
+    remaining = remaining.replace(item.pattern, "[민감정보 삭제]")
+  }
+  return detected
+}
+
+export function privacyGuardMessage(detectedLabels: string[]): string {
+  const labels = detectedLabels.join("·") || "민감 개인정보"
+  return (
+    `입력에서 민감 개인정보(${labels})를 감지해 전송과 정책 검색을 중단했어요. ` +
+    "입력 내용은 화면과 로컬 기록에서 삭제 표식으로 바꿨어요. " +
+    "정책 추천에는 주민등록번호·연락처·계좌번호가 필요하지 않아요. " +
+    "만 나이, 거주 시·도, 취업 또는 창업 상태처럼 필요한 조건만 알려주세요."
+  )
 }
 
 function safeString(value: unknown): string | null {
