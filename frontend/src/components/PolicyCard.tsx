@@ -11,8 +11,15 @@ const CATEGORY_COLORS: Record<string, string> = {
   "경영/기술": "#f8934f",
 };
 
+const SCOPE_BADGES = {
+  exact: { label: "요청 지역 일치", background: "#eff6ff", color: "#1d4ed8", border: "#bfdbfe" },
+  nationwide: { label: "전국 대상", background: "#f0fdf4", color: "#15803d", border: "#bbf7d0" },
+  nearby_reference: { label: "인접 지역 참고", background: "#fff7ed", color: "#c2410c", border: "#fed7aa" },
+} as const;
+
 export default function PolicyCardComponent({ card }: Props) {
   const badgeColor = CATEGORY_COLORS[card.category] || "#6b7280";
+  const scopeBadge = card.scope === "excluded" ? null : SCOPE_BADGES[card.scope];
 
   return (
     <div
@@ -54,6 +61,21 @@ export default function PolicyCardComponent({ card }: Props) {
             {card.category}
           </span>
           <span style={{ color: "#6b7280", fontSize: "12px" }}>{card.ministry}</span>
+          {scopeBadge && (
+            <span
+              style={{
+                background: scopeBadge.background,
+                color: scopeBadge.color,
+                fontSize: "11px",
+                fontWeight: 600,
+                padding: "2px 8px",
+                borderRadius: "999px",
+                border: `1px solid ${scopeBadge.border}`,
+              }}
+            >
+              {scopeBadge.label}
+            </span>
+          )}
         </div>
       </div>
 
@@ -67,6 +89,16 @@ export default function PolicyCardComponent({ card }: Props) {
         <InfoRow label="지원대상" value={card.target} />
         <InfoRow label="지원금액" value={card.amount} highlight />
         <InfoRow label="신청기간" value={card.period} />
+        <InfoRow label="대상지역" value={card.region} />
+        {card.scope === "nearby_reference" && card.distanceKm != null && (
+          <InfoRow label="참고거리" value={`대표 좌표 기준 약 ${card.distanceKm}km`} />
+        )}
+        {card.scope !== "nearby_reference" && card.matchScore != null && (
+          <InfoRow label="추천 적합도" value={`${Math.round(card.matchScore * 100)}점`} highlight />
+        )}
+        {card.scope !== "nearby_reference" && card.evidenceCoverage != null && (
+          <InfoRow label="근거 확인률" value={`${Math.round(card.evidenceCoverage * 100)}%`} />
+        )}
       </div>
 
       {/* Reason */}
@@ -81,7 +113,9 @@ export default function PolicyCardComponent({ card }: Props) {
           borderLeft: "3px solid #4f7ef8",
         }}
       >
-        <span style={{ color: "#4f7ef8", fontWeight: 600, marginRight: "4px" }}>추천 이유</span>
+        <span style={{ color: "#4f7ef8", fontWeight: 600, marginRight: "4px" }}>
+          {card.scope === "nearby_reference" ? "참고 이유" : "추천 이유"}
+        </span>
         {card.reason}
       </div>
 

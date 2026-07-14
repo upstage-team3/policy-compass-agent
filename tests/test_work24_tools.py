@@ -4,6 +4,7 @@ from datetime import date
 from types import SimpleNamespace
 
 import httpx
+import pytest
 
 from app.graph import nodes
 from app.repositories.work24_recruitment import (
@@ -18,6 +19,8 @@ from app.repositories.work24_training import (
     training_fallback_guide,
 )
 from app.repositories.youthcenter import (
+    YouthCenterAPIUnavailableError,
+    YouthCenterRepository,
     _build_youth_search_terms,
     _filter_active_youth_policies,
     _filter_youth_policies_by_region,
@@ -314,6 +317,70 @@ def test_youth_search_terms_do_not_replace_specific_query_with_broad_profile_top
     assert terms == ["고립 은둔"]
 
 
+async def test_youth_fetch_retries_once_after_server_error():
+    repository = YouthCenterRepository()
+
+    class RetryClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def get(self, api_url, params):
+            del api_url, params
+            self.calls += 1
+            if self.calls == 1:
+                return httpx.Response(500, request=httpx.Request("GET", "https://example.com"))
+            return httpx.Response(
+                200,
+                request=httpx.Request("GET", "https://example.com"),
+                headers={"content-type": "application/json"},
+                json={"resultCode": 200, "result": {"youthPolicyList": []}},
+            )
+
+    client = RetryClient()
+    result = await repository._fetch(client, "https://example.com", {"pageNum": "1"})
+
+    assert result == []
+    assert client.calls == 2
+
+
+async def test_youth_fetch_raises_after_repeated_server_errors():
+    repository = YouthCenterRepository()
+
+    class FailingClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def get(self, api_url, params):
+            del api_url, params
+            self.calls += 1
+            return httpx.Response(500, request=httpx.Request("GET", "https://example.com"))
+
+    client = FailingClient()
+    with pytest.raises(YouthCenterAPIUnavailableError):
+        await repository._fetch(client, "https://example.com", {"pageNum": "1"})
+
+    assert client.calls == 2
+
+
+async def test_youth_search_returns_availability_guide_when_every_fetch_fails(monkeypatch):
+    repository = YouthCenterRepository()
+    repository._settings = SimpleNamespace(
+        youthcenter_policy_api_key="test-key",
+        youthcenter_policy_api_url="https://example.com/youth",
+    )
+
+    async def fail_fetch(client, api_url, params):
+        del client, api_url, params
+        raise YouthCenterAPIUnavailableError
+
+    monkeypatch.setattr(repository, "_fetch", fail_fetch)
+    result = await repository.search(YouthPolicySearchInput(keywords="주거"))
+
+    assert len(result) == 1
+    assert result[0].policy_id == "youthcenter-guide"
+    assert "정책 유무를 확인하지 못했어요" in (result[0].fallback_reason or "")
+
+
 def test_youth_policy_region_filter_keeps_matching_and_nationwide_items():
     items = [
         YouthPolicyItem(policy_id="seoul", title="서울 정책", region="서울", raw={"zipCd": "11110"}),
@@ -352,6 +419,17 @@ async def test_training_profile_extracts_request_kind_and_desired_job():
     assert result["request_kind"] == "training"
     assert result["profile"]["region"] == "서울"
     assert result["profile"]["desired_job"] == "데이터 분석"
+
+
+async def test_training_profile_extracts_cloud_job_without_reasking():
+    result = await nodes.profile_extractor_node(
+        {"user_input": "서울에서 클라우드 엔지니어 국비과정 찾아줘", "request_kind": "training"}
+    )
+
+    assert result["profile"]["region"] == "서울"
+    assert result["profile"]["desired_job"] == "클라우드 엔지니어"
+    missing = await nodes.missing_slot_node({"request_kind": "training", "profile": result["profile"]})
+    assert missing["missing_slots"] == []
 
 
 def test_heuristic_route_treats_training_and_recruitment_as_recommend():

@@ -5,6 +5,8 @@ interface Props {
   activeChatId: string | null;
   onSelectChat: (id: string) => void;
   onNewChat: () => void;
+  onDeleteChat: (id: string) => void;
+  onClearChats: () => void;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -19,7 +21,7 @@ function formatTime(date: Date): string {
   return `${Math.floor(hours / 24)}일 전`;
 }
 
-export default function Sidebar({ chats, activeChatId, onSelectChat, onNewChat, isOpen, onClose }: Props) {
+export default function Sidebar({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat, onClearChats, isOpen, onClose }: Props) {
   return (
     <>
       {/* Mobile overlay */}
@@ -121,40 +123,81 @@ export default function Sidebar({ chats, activeChatId, onSelectChat, onNewChat, 
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
             {chats.map((chat) => (
-              <button
+              <div
                 key={chat.id}
-                onClick={() => onSelectChat(chat.id)}
                 style={{
                   width: "100%",
-                  padding: "10px 10px",
                   background: activeChatId === chat.id ? "#eef1f7" : "transparent",
                   border: "1px solid",
                   borderColor: activeChatId === chat.id ? "#e2e5ec" : "transparent",
                   borderRadius: "8px",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  transition: "background 0.12s",
-                }}
-                onMouseEnter={(e) => {
-                  if (activeChatId !== chat.id) {
-                    (e.currentTarget as HTMLButtonElement).style.background = "#f2f4f8";
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (activeChatId !== chat.id) {
-                    (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-                  }
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "2px",
                 }}
               >
-                <div style={{ fontSize: "13px", color: "#1f2430", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.4 }}>
-                  {chat.title}
-                </div>
-                <div style={{ fontSize: "11px", color: "#6b7280", marginTop: "2px" }}>
-                  {formatTime(chat.createdAt)}
-                </div>
-              </button>
+                <button
+                  onClick={() => onSelectChat(chat.id)}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    padding: "9px 8px",
+                    background: "transparent",
+                    border: "none",
+                    textAlign: "left",
+                    cursor: "pointer",
+                  }}
+                >
+                  <div style={{ fontSize: "13px", color: "#1f2430", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.4 }}>
+                    {chat.title}
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#6b7280", marginTop: "2px" }}>
+                    {formatTime(chat.createdAt)}
+                  </div>
+                </button>
+                <button
+                  onClick={() => onDeleteChat(chat.id)}
+                  aria-label={`${chat.title} 삭제`}
+                  title="채팅 삭제"
+                  style={{
+                    width: "28px",
+                    height: "28px",
+                    marginRight: "4px",
+                    background: "transparent",
+                    border: "none",
+                    borderRadius: "6px",
+                    color: "#8a90a3",
+                    cursor: "pointer",
+                    fontSize: "16px",
+                  }}
+                >
+                  ×
+                </button>
+              </div>
             ))}
+            {chats.length === 0 && (
+              <div style={{ padding: "18px 8px", fontSize: "12px", color: "#8a90a3", textAlign: "center" }}>
+                저장된 대화가 없어요.
+              </div>
+            )}
           </div>
+          {chats.length > 0 && (
+            <button
+              onClick={onClearChats}
+              style={{
+                width: "100%",
+                marginTop: "12px",
+                padding: "8px",
+                background: "transparent",
+                border: "none",
+                color: "#8a90a3",
+                fontSize: "11.5px",
+                cursor: "pointer",
+              }}
+            >
+              전체 기록 삭제
+            </button>
+          )}
         </div>
 
         {/* Footer */}

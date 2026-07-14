@@ -27,6 +27,30 @@ _STREAM_CHUNK_SIZE = 24
 _chat_memory = SupabaseChatMemoryRepository()
 
 
+def _result_status_message(result: dict) -> str:
+    """Return a user-facing progress message from the validated router result."""
+
+    request_kind = result.get("request_kind", "general")
+    missing_slots = result.get("missing_slots") or []
+    labels = {
+        "youth_policy": "청년정책",
+        "training": "고용24 훈련과정",
+        "recruitment": "채용 보조정보",
+        "business": "기업마당 지원사업",
+    }
+
+    if request_kind in labels:
+        label = labels[request_kind]
+        if missing_slots:
+            return f"{label} 추천에 필요한 조건을 정리했어요."
+        return f"{label} 검색 결과를 확인했어요."
+
+    return {
+        "EXPLAIN": "질문에 맞는 설명을 정리했어요.",
+        "OUT_OF_SCOPE": "지원 가능한 상담 범위를 확인했어요.",
+    }.get(result.get("intent", "GENERAL"), "대화 내용을 바탕으로 답변을 정리했어요.")
+
+
 async def _run_agent(payload: ChatRequest) -> dict:
     graph = get_agent_graph()
     config = {"configurable": {"thread_id": payload.session_id}}
@@ -37,8 +61,12 @@ async def _run_agent(payload: ChatRequest) -> dict:
     }
     if memory.messages:
         initial_state["conversation_history"] = memory.messages
+    profile = payload.profile_defaults.model_dump(exclude_none=True) if payload.profile_defaults else {}
     if memory.profile:
-        initial_state["profile"] = memory.profile
+        # 같은 채팅에서 확인한 조건이 브라우저 기본값보다 우선한다.
+        profile.update(memory.profile)
+    if profile:
+        initial_state["profile"] = profile
     if memory.pending_request:
         initial_state["pending_request"] = memory.pending_request
 
@@ -70,7 +98,7 @@ async def chat(payload: ChatRequest) -> ChatTurnResponse:
 @router.post("/stream")
 async def chat_stream(payload: ChatRequest) -> StreamingResponse:
     async def event_generator():
-        status_event = {"type": "status", "message": "조건을 확인하고 추천 후보를 찾고 있어요."}
+        status_event = {"type": "status", "message": "질문 의도와 필요한 정보를 확인하고 있어요."}
         yield f"event: status\ndata: {json.dumps(status_event, ensure_ascii=False)}\n\n"
 
         try:
@@ -83,6 +111,9 @@ async def chat_stream(payload: ChatRequest) -> StreamingResponse:
             }
             yield f"event: error\ndata: {json.dumps(error_event, ensure_ascii=False)}\n\n"
             return
+
+        routed_status_event = {"type": "status", "message": _result_status_message(result)}
+        yield f"event: status\ndata: {json.dumps(routed_status_event, ensure_ascii=False)}\n\n"
 
         reply = result.get("final_response", "")
         if not reply:
@@ -102,6 +133,9 @@ async def chat_stream(payload: ChatRequest) -> StreamingResponse:
             "intent": result.get("intent", "GENERAL"),
             "missing_slots": result.get("missing_slots", []),
             "recommendations": result.get("scored_results", []),
+            "profile_defaults": {
+                key: value for key in ("age", "region") if (value := (result.get("profile") or {}).get(key)) is not None
+            },
         }
         yield f"event: done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
 

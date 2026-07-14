@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>정책나침반 Day5 로컬 검증 증빙</title>
+    <style>
+      :root { color-scheme: dark; font-family: "Noto Sans KR", "Apple SD Gothic Neo", sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #0b1020; color: #e8ecf7; }
+      main { width: 1120px; margin: 0 auto; padding: 28px 40px; }
+      .eyebrow { color: #7dd3fc; font-size: 12px; font-weight: 700; letter-spacing: .08em; }
+      h1 { margin: 6px 0 6px; font-size: 28px; }
+      .meta { color: #9ba8c7; margin-bottom: 16px; font-size: 13px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      section { background: #131a2d; border: 1px solid #29334f; border-radius: 14px; padding: 16px 20px; }
+      h2 { margin: 0 0 10px; font-size: 17px; }
+      .result { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #27304a; font-size: 13px; }
+      .result:last-child { border-bottom: 0; }
+      .ok { color: #86efac; font-weight: 800; }
+      pre { margin: 0; white-space: pre-wrap; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: #dbeafe; }
+      .status { color: #fcd34d; }
+      .done { color: #86efac; }
+      .note { margin-top: 12px; color: #cbd5e1; font-size: 12px; line-height: 1.45; }
+      .warn { color: #fda4af; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="eyebrow">PROJECT DAY5 · LOCAL EVIDENCE</div>
+      <h1>안정화·대화 복원·회귀 테스트 검증</h1>
+      <div class="meta">정책나침반 · 2026-07-13 사전 검증 · 외부 키를 비운 결정론적 환경</div>
+      <div class="grid">
+        <section>
+          <h2>자동 검증 결과</h2>
+          <div class="result"><span>Ruff lint</span><span class="ok">PASS</span></div>
+          <div class="result"><span>Ruff format</span><span class="ok">41 files</span></div>
+          <div class="result"><span>pytest</span><span class="ok">88 passed</span></div>
+          <div class="result"><span>Frontend persistence</span><span class="ok">4 passed</span></div>
+          <div class="result"><span>React production build</span><span class="ok">PASS</span></div>
+          <div class="result"><span>.env Git ignore</span><span class="ok">CONFIRMED</span></div>
+          <p class="note">새 회귀 테스트: SSE 상태 6종, 안전한 Agent 예외, Docker React 계약, 클라우드 직무, 새로고침 복원·민감정보 마스킹·보존 한도.</p>
+        </section>
+        <section>
+          <h2>SSE 훈련 질문 실응답</h2>
+          <pre><span class="status">event: status</span>
+질문 의도와 필요한 정보를 확인하고 있어요.
+
+<span class="status">event: status</span>
+고용24 훈련과정 검색 결과를 확인했어요.
+
+event: token
+추천 검색어: 클라우드 엔지니어
+지역 조건: 서울
+
+<span class="done">event: done</span>
+intent: RECOMMEND
+missing_slots: []</pre>
+        </section>
+      </div>
+      <p class="note warn">Dockerfile은 React 빌드 결과를 이미지에 포함하도록 수정했으며, 실제 `docker build`는 Docker Desktop 데몬이 꺼져 있어 Day5 수업 중 재확인한다. Langfuse 키 입력과 Trace 캡처도 수업 중 직접 진행한다.</p>
+    </main>
+  </body>
+</html>

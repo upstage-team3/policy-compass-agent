@@ -3,7 +3,12 @@ from __future__ import annotations
 from datetime import date
 
 from app.graph import edges, nodes
-from app.graph.response_composer import _compact_candidates, clean_response_text, compose_youth_policy_response
+from app.graph.response_composer import (
+    _compact_candidates,
+    clarification_template,
+    clean_response_text,
+    compose_youth_policy_response,
+)
 from app.graph.scoring import deadline_status, score_policy
 from app.repositories.policy import _normalize_bizinfo_item, _normalize_bizinfo_items
 
@@ -52,6 +57,13 @@ def test_clean_response_text_removes_markdown_formal_intro_and_internal_fields()
     assert "detail_url" not in cleaned
 
 
+def test_clarification_template_avoids_broken_korean_particle():
+    reply = clarification_template(["거주 지역", "만 나이"])
+
+    assert reply == "정확한 결과를 찾으려면 다음 정보가 필요해요: 거주 지역, 만 나이."
+    assert "나이을" not in reply
+
+
 def test_youth_policy_template_groups_truly_missing_application_fields():
     response = compose_youth_policy_response(
         [
@@ -67,6 +79,21 @@ def test_youth_policy_template_groups_truly_missing_application_fields():
     assert "사업 기간: 2026-01-01 ~ 2026-12-31" in response
     assert "신청 기간·신청 방법·상세 링크 정보가 등록되어 있지 않아요" in response
     assert "application_period" not in response
+
+
+def test_youth_policy_template_distinguishes_api_failure_from_no_results():
+    response = compose_youth_policy_response(
+        [
+            {
+                "policy_id": "youthcenter-guide",
+                "title": "온통청년 청년정책 조회 안내",
+                "fallback_reason": "온통청년 API가 일시적으로 응답하지 않았어요.",
+            }
+        ]
+    )
+
+    assert "정책이 없다고 판단한 것은 아니" in response
+    assert "API가 일시적으로 응답하지 않았어요" in response
 
 
 def test_compact_youth_candidates_expose_only_actual_missing_information():
@@ -183,6 +210,18 @@ async def test_search_explanation_skips_recommendation_slots():
     result = await nodes.missing_slot_node({"response_mode": "explain", "request_kind": "youth_policy", "profile": {}})
 
     assert result["missing_slots"] == []
+
+
+async def test_topic_listing_explanation_still_requires_personalization_slots():
+    result = await nodes.missing_slot_node(
+        {
+            "response_mode": "explain",
+            "request_kind": "youth_policy",
+            "profile": {"policy_topic": "주거"},
+        }
+    )
+
+    assert result["missing_slots"] == ["region", "age"]
 
 
 def test_route_after_router_uses_action_only():

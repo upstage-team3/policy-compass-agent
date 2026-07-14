@@ -8,6 +8,11 @@ export interface PolicyCard {
   url?: string;
   ministry: string;
   category: string;
+  region: string;
+  scope: "exact" | "nationwide" | "nearby_reference" | "excluded";
+  distanceKm?: number | null;
+  matchScore?: number;
+  evidenceCoverage?: number;
 }
 
 export type MessageRole = "user" | "assistant";

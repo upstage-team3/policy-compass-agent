@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -11,7 +13,7 @@ class PolicyItem(BaseModel):
     agency: str
     category: str  # "구직창업" | "창업" | "경영/기술" 등
     target_description: str
-    region: list[str] = Field(default_factory=lambda: ["전국"])
+    region: list[str] = Field(default_factory=list)
     min_age: int | None = None
     max_age: int | None = None
     target_employment_status: list[str] = Field(default_factory=list)
@@ -22,6 +24,8 @@ class PolicyItem(BaseModel):
     apply_method: str
     support_content: str
     source_url: str
+    match_scope: Literal["exact", "nationwide", "nearby", "unknown"] = "unknown"
+    distance_km: float | None = None
 
 
 class PolicySearchResult(BaseModel):

@@ -19,6 +19,13 @@ class UserProfile(BaseModel):
     policy_topic: str | None = None
 
 
+class UserProfileDefaults(BaseModel):
+    """새 채팅에서도 재사용할 수 있는 최소 비민감 사용자 조건."""
+
+    age: int | None = Field(default=None, ge=0, le=120)
+    region: str | None = Field(default=None, max_length=100)
+
+
 class ChatRequest(BaseModel):
     session_id: str = Field(
         default_factory=lambda: str(uuid4()),
@@ -27,6 +34,7 @@ class ChatRequest(BaseModel):
         pattern=r"^[A-Za-z0-9_-]+$",
     )
     message: str = Field(min_length=1, max_length=4000)
+    profile_defaults: UserProfileDefaults | None = None
 
 
 class ChatTurnResponse(BaseModel):
