@@ -191,12 +191,18 @@ function parseMessage(value: unknown): Message | null {
         .filter((card): card is PolicyCard => card !== null)
     : undefined
 
+  const traceId = safeString(value.traceId)
+  const feedback =
+    value.feedback === "up" || value.feedback === "down" ? value.feedback : undefined
+
   return {
     id,
     role,
     content,
     timestamp,
     ...(policyCards && policyCards.length > 0 ? { policyCards } : {}),
+    ...(traceId ? { traceId } : {}),
+    ...(feedback ? { feedback } : {}),
   }
 }
 

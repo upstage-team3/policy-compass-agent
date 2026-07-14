@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react"
-import type { Chat, Message } from "./types"
+import type { Chat, Message, RecommendationFeedback } from "./types"
 import { WELCOME_MESSAGE } from "./data"
-import { streamChat, toPolicyCard } from "./lib/api"
+import { streamChat, submitFeedback, toPolicyCard } from "./lib/api"
 import {
   clearProfileDefaults,
   detectSensitiveData,
@@ -211,7 +211,9 @@ export default function App() {
               ? {
                   ...c,
                   messages: c.messages.map((m) =>
-                    m.id === assistantId ? { ...m, policyCards: cards } : m,
+                    m.id === assistantId
+                      ? { ...m, policyCards: cards, traceId: result.traceId }
+                      : m,
                   ),
                 }
               : c,
@@ -242,6 +244,26 @@ export default function App() {
       setIsTyping(false)
       setTypingStatus("질문을 확인하고 있어요.")
     }
+  }
+
+  const handleFeedback = (messageId: string, rating: RecommendationFeedback) => {
+    if (!activeChatId) return
+    const message = activeChat?.messages.find((m) => m.id === messageId)
+
+    setChats((prev) =>
+      prev.map((c) =>
+        c.id === activeChatId
+          ? {
+              ...c,
+              messages: c.messages.map((m) =>
+                m.id === messageId ? { ...m, feedback: rating } : m,
+              ),
+            }
+          : c,
+      ),
+    )
+
+    submitFeedback(activeChatId, messageId, message?.traceId ?? null, rating)
   }
 
   return (
@@ -408,7 +430,7 @@ export default function App() {
           >
             {activeChat ? (
               activeChat.messages.map((msg) => (
-                <ChatMessage key={msg.id} message={msg} />
+                <ChatMessage key={msg.id} message={msg} onFeedback={handleFeedback} />
               ))
             ) : (
               <div

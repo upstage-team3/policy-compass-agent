@@ -44,3 +44,11 @@ class ChatTurnResponse(BaseModel):
     profile: UserProfile
     missing_slots: list[str] = Field(default_factory=list)
     recommendations: list[dict] = Field(default_factory=list)
+    trace_id: str | None = None
+
+
+class RecommendationFeedbackRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    message_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    trace_id: str | None = None
+    rating: Literal["up", "down"]

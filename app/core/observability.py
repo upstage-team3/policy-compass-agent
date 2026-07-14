@@ -47,14 +47,20 @@ def get_langfuse_client() -> Langfuse | None:
         return None
 
 
-def create_langfuse_handler() -> CallbackHandler | None:
-    """Create an isolated callback handler for one graph invocation."""
+def create_langfuse_handler(*, trace_id: str | None = None) -> CallbackHandler | None:
+    """Create an isolated callback handler for one graph invocation.
+
+    trace_id를 미리 지정하면(예: 사용자 피드백을 나중에 이 트레이스에 연결하기 위해)
+    호출자가 그 값을 그대로 기억해 쓸 수 있다. 그래프 실행이 끝나면 콜백이 만든
+    span의 컨텍스트가 이미 닫혀 있어 사후에 get_current_trace_id()로는 못 가져온다.
+    """
 
     if get_langfuse_client() is None:
         return None
 
     try:
-        return CallbackHandler(public_key=get_settings().langfuse_public_key)
+        trace_context = {"trace_id": trace_id} if trace_id else None
+        return CallbackHandler(public_key=get_settings().langfuse_public_key, trace_context=trace_context)
     except Exception:  # noqa: BLE001 - tracing is optional
         logger.warning("Langfuse callback 생성에 실패해 현재 요청의 tracing을 건너뜁니다.")
         return None
