@@ -1,17 +1,19 @@
 import Markdown from "react-markdown";
-import type { Message } from "../types";
+import type { Message, RecommendationFeedback } from "../types";
 import PolicyCardComponent from "./PolicyCard";
 
 interface Props {
   message: Message;
+  onFeedback?: (messageId: string, rating: RecommendationFeedback) => void;
 }
 
 function formatTimestamp(date: Date): string {
   return date.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
 }
 
-export default function ChatMessage({ message }: Props) {
+export default function ChatMessage({ message, onFeedback }: Props) {
   const isUser = message.role === "user";
+  const hasRecommendations = !isUser && !!message.policyCards && message.policyCards.length > 0;
 
   return (
     <div
@@ -80,39 +82,72 @@ export default function ChatMessage({ message }: Props) {
         )}
       </div>
 
-      {/* Policy cards carousel */}
+      {/* Policy cards */}
       {!isUser && message.policyCards && message.policyCards.length > 0 && (
         <div style={{ width: "100%", maxWidth: "min(720px, 92%)", marginTop: "8px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "8px" }}>
             <span style={{ fontSize: "12px", color: "#6b7280", fontWeight: 600 }}>
               추천 정책 {message.policyCards.length}건
             </span>
-            <span style={{ fontSize: "11px", color: "#8a90a3" }}>→ 스크롤하여 더 보기</span>
           </div>
-          <div
-            className="policy-carousel"
-            style={{
-              display: "flex",
-              gap: "12px",
-              overflowX: "auto",
-              paddingBottom: "8px",
-              scrollSnapType: "x mandatory",
-              WebkitOverflowScrolling: "touch",
-            }}
-          >
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             {message.policyCards.map((card) => (
-              <div
-                key={card.id}
-                style={{
-                  flexShrink: 0,
-                  width: "300px",
-                  scrollSnapAlign: "start",
-                }}
-              >
-                <PolicyCardComponent card={card} />
-              </div>
+              <PolicyCardComponent key={card.id} card={card} />
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Recommendation feedback (thumbs up/down for the whole set of cards) */}
+      {hasRecommendations && (
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "2px", paddingLeft: "4px" }}>
+          <span style={{ fontSize: "11.5px", color: "#8a90a3" }}>이 추천, 도움이 됐나요?</span>
+          <button
+            type="button"
+            onClick={() => onFeedback?.(message.id, "up")}
+            aria-pressed={message.feedback === "up"}
+            style={{
+              border: "1px solid",
+              borderColor: message.feedback === "up" ? "#1f9d54" : "#e2e5ec",
+              background: message.feedback === "up" ? "#eafbf1" : "#ffffff",
+              color: message.feedback === "up" ? "#1f9d54" : "#6b7280",
+              borderRadius: "999px",
+              width: "26px",
+              height: "26px",
+              fontSize: "13px",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "background 0.15s, border-color 0.15s, color 0.15s",
+            }}
+            title="도움이 됐어요"
+          >
+            👍
+          </button>
+          <button
+            type="button"
+            onClick={() => onFeedback?.(message.id, "down")}
+            aria-pressed={message.feedback === "down"}
+            style={{
+              border: "1px solid",
+              borderColor: message.feedback === "down" ? "#dc2626" : "#e2e5ec",
+              background: message.feedback === "down" ? "#fdeeee" : "#ffffff",
+              color: message.feedback === "down" ? "#dc2626" : "#6b7280",
+              borderRadius: "999px",
+              width: "26px",
+              height: "26px",
+              fontSize: "13px",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "background 0.15s, border-color 0.15s, color 0.15s",
+            }}
+            title="도움이 안 됐어요"
+          >
+            👎
+          </button>
         </div>
       )}
     </div>

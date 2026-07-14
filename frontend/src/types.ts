@@ -17,12 +17,16 @@ export interface PolicyCard {
 
 export type MessageRole = "user" | "assistant";
 
+export type RecommendationFeedback = "up" | "down";
+
 export interface Message {
   id: string;
   role: MessageRole;
   content: string;
   timestamp: Date;
   policyCards?: PolicyCard[];
+  traceId?: string | null;
+  feedback?: RecommendationFeedback | null;
 }
 
 export interface Chat {

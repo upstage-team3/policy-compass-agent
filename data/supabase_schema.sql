@@ -80,6 +80,61 @@ create index if not exists training_courses_region_idx on training_courses (regi
 create index if not exists training_courses_start_date_idx on training_courses (start_date);
 create index if not exists training_courses_fetched_at_idx on training_courses (fetched_at);
 
+-- 온통청년(youthcenter) 청년정책 캐시 (app/repositories/youthcenter.py fallback용)
+-- application_period은 원본 API가 자유 형식 문자열로 내려줘 text로 저장한다.
+-- policy_id="youthcenter-guide" 같은 안내용 합성 레코드(fallback_reason 있는 것)는
+-- 실제 정책이 아니므로 인제스트 시 제외한다.
+create table if not exists youth_policies (
+    id uuid primary key default gen_random_uuid(),
+    source text not null default 'youthcenter',
+    policy_id text not null,
+    title text not null,
+    organization text,
+    region text,
+    target_summary text,
+    support_summary text,
+    business_period text,
+    business_end_date text,
+    application_period text,
+    application_method text,
+    detail_url text,
+    raw_payload jsonb,
+    fetched_at timestamptz not null default now(),
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    unique (source, policy_id)
+);
+
+create index if not exists youth_policies_region_idx on youth_policies (region);
+create index if not exists youth_policies_fetched_at_idx on youth_policies (fetched_at);
+
+-- 고용24/워크넷 채용정보 캐시 (app/repositories/work24_recruitment.py fallback용)
+-- item_type: event(채용행사) | open_recruitment(공채속보) | company(공채기업정보) | guide(안내용)
+-- item_id="work24-recruitment-guide" 같은 안내용 합성 레코드(fallback_reason 있는 것)는
+-- 실제 채용정보가 아니므로 인제스트 시 제외한다.
+create table if not exists recruitment_infos (
+    id uuid primary key default gen_random_uuid(),
+    source text not null default 'work24_recruitment',
+    item_id text not null,
+    item_type text not null,
+    title text not null,
+    company text,
+    region text,
+    start_date text,
+    end_date text,
+    summary text,
+    detail_url text,
+    raw_payload jsonb,
+    fetched_at timestamptz not null default now(),
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    unique (source, item_id)
+);
+
+create index if not exists recruitment_infos_region_idx on recruitment_infos (region);
+create index if not exists recruitment_infos_item_type_idx on recruitment_infos (item_type);
+create index if not exists recruitment_infos_fetched_at_idx on recruitment_infos (fetched_at);
+
 -- 세션 기반 대화 로그 (민감 개인정보 미저장, 데모 환경에서는 최소 로그만 유지)
 create table if not exists chat_logs (
     id bigint generated always as identity primary key,
@@ -103,6 +158,22 @@ create table if not exists chat_sessions (
 
 create index if not exists chat_sessions_updated_at_idx on chat_sessions (updated_at desc);
 
+-- 추천 결과(말풍선 1개 = 카드 여러 개)에 대한 사용자 피드백(엄지 업/다운).
+-- 같은 메시지에 다시 누르면 rating만 덮어쓴다 (session_id, message_id 유니크).
+-- trace_id는 Langfuse 트레이스와 연결해 점수(score)로도 남기기 위한 참조값이다.
+create table if not exists recommendation_feedback (
+    session_id text not null,
+    message_id text not null,
+    trace_id text,
+    rating text not null check (rating in ('up', 'down')),
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    primary key (session_id, message_id)
+);
+
+create index if not exists recommendation_feedback_session_id_idx on recommendation_feedback (session_id);
+
 -- 대화 내용은 백엔드의 service role 키로만 접근한다.
 alter table chat_logs enable row level security;
 alter table chat_sessions enable row level security;
+alter table recommendation_feedback enable row level security;

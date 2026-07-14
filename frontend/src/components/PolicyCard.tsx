@@ -93,30 +93,6 @@ export default function PolicyCardComponent({ card }: Props) {
         {card.scope === "nearby_reference" && card.distanceKm != null && (
           <InfoRow label="참고거리" value={`대표 좌표 기준 약 ${card.distanceKm}km`} />
         )}
-        {card.scope !== "nearby_reference" && card.matchScore != null && (
-          <InfoRow label="추천 적합도" value={`${Math.round(card.matchScore * 100)}점`} highlight />
-        )}
-        {card.scope !== "nearby_reference" && card.evidenceCoverage != null && (
-          <InfoRow label="근거 확인률" value={`${Math.round(card.evidenceCoverage * 100)}%`} />
-        )}
-      </div>
-
-      {/* Reason */}
-      <div
-        style={{
-          background: "#f5f7fb",
-          borderRadius: "8px",
-          padding: "10px 12px",
-          fontSize: "12.5px",
-          color: "#4b5164",
-          lineHeight: 1.6,
-          borderLeft: "3px solid #4f7ef8",
-        }}
-      >
-        <span style={{ color: "#4f7ef8", fontWeight: 600, marginRight: "4px" }}>
-          {card.scope === "nearby_reference" ? "참고 이유" : "추천 이유"}
-        </span>
-        {card.reason}
       </div>
 
       {/* Action */}

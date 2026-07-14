@@ -47,9 +47,6 @@ body {
   background: #c3c8d3;
 }
 
-.policy-carousel::-webkit-scrollbar { display: none; }
-.policy-carousel { scrollbar-width: none; -ms-overflow-style: none; }
-
 .prose-chat p { margin: 0 0 0.5em; line-height: 1.7; }
 .prose-chat p:last-child { margin-bottom: 0; }
 .prose-chat ul, .prose-chat ol { margin: 0.5em 0; padding-left: 1.4em; }

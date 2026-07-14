@@ -41,6 +41,7 @@ export interface ChatStreamResult {
   missingSlots: string[]
   recommendations: BackendRecommendation[]
   profileDefaults: UserProfileDefaults
+  traceId: string | null
 }
 
 type TokenHandler = (chunk: string) => void
@@ -82,6 +83,7 @@ export async function streamChat(
     missingSlots: [],
     recommendations: [],
     profileDefaults,
+    traceId: null,
   }
 
   while (true) {
@@ -108,6 +110,7 @@ export async function streamChat(
           missingSlots: payload.missing_slots ?? [],
           recommendations: payload.recommendations ?? [],
           profileDefaults: payload.profile_defaults ?? profileDefaults,
+          traceId: payload.trace_id ?? null,
         }
       } else if (payload.type === "error") {
         throw new Error(payload.message ?? "알 수 없는 오류가 발생했어요.")
@@ -137,4 +140,23 @@ export function toPolicyCard(rec: BackendRecommendation): PolicyCard {
     matchScore: rec.match_score,
     evidenceCoverage: rec.evidence_coverage,
   }
+}
+
+/** 추천 결과(말풍선 1개)에 대한 엄지 업/다운 피드백을 백엔드로 전송한다. */
+export async function submitFeedback(
+  sessionId: string,
+  messageId: string,
+  traceId: string | null,
+  rating: "up" | "down",
+): Promise<void> {
+  await fetch(`${API_BASE}/api/chat/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      session_id: sessionId,
+      message_id: messageId,
+      trace_id: traceId,
+      rating,
+    }),
+  })
 }
