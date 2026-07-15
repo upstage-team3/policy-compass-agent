@@ -86,10 +86,30 @@ export default function PolicyCardComponent({ card }: Props) {
 
       {/* Info grid */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 12px" }}>
-        <InfoRow label="지원대상" value={card.target} />
-        <InfoRow label="지원금액" value={card.amount} highlight />
-        <InfoRow label="신청기간" value={card.period} />
-        <InfoRow label="대상지역" value={card.region} />
+        {card.category === "공채속보" ? (
+          <>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <InfoRow label="고용 형태" value={card.amount} highlight />
+            </div>
+            <InfoRow label="신청 시작 날짜" value={card.applyStart || "상시"} />
+            <InfoRow label="신청 마감 날짜" value={card.applyEnd || "상시"} />
+          </>
+        ) : card.category === "채용행사" ? (
+          <>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <InfoRow label="지역" value={card.region} />
+            </div>
+            <InfoRow label="행사 시작 날짜" value={card.applyStart || "상시"} />
+            <InfoRow label="행사 종료 날짜" value={card.applyEnd || "상시"} />
+          </>
+        ) : (
+          <>
+            <InfoRow label="지원대상" value={card.target} />
+            <InfoRow label={card.category === "청년정책" ? "지원내용" : "지원금액"} value={card.amount} highlight />
+            <InfoRow label="신청기간" value={card.period} />
+            <InfoRow label="대상지역" value={card.region} />
+          </>
+        )}
         {card.scope === "nearby_reference" && card.distanceKm != null && (
           <InfoRow label="참고거리" value={`대표 좌표 기준 약 ${card.distanceKm}km`} />
         )}
