@@ -374,15 +374,38 @@ def _build_youth_search_terms(query: YouthPolicySearchInput) -> list[str | None]
 
 
 class YouthCenterRepository:
-    """온통청년 청년정책 Open API 접근 계층."""
+    """온통청년 청년정책 Open API 접근 계층.
+
+    fallback_repository는 라이브 API 키 미설정 또는 호출 전면 실패(요청 한도 초과,
+    장애 등) 시에만 사용되는 Supabase 캐시 조회 계층이다
+    (app.repositories.supabase_fallback.SupabaseYouthPolicyFallback와 호환되는
+    search(query) -> list[YouthPolicyItem] 메서드가 있으면 된다).
+    """
 
     def __init__(self, fallback_repository: object | None = None) -> None:
         self._settings = get_settings()
         self._fallback_repository = fallback_repository
 
+    async def _fallback_search(self, query: YouthPolicySearchInput) -> list[YouthPolicyItem]:
+        if self._fallback_repository is None:
+            return []
+        try:
+            items = await self._fallback_repository.search(query)
+        except Exception:  # noqa: BLE001 - 캐시 fallback 실패가 상위 흐름을 막으면 안 됨
+            logger.exception("[캐시 폴백] 온통청년 캐시 조회 실패")
+            return []
+        if items:
+            logger.info("[캐시 폴백] 온통청년 캐시에서 %d건 반환", len(items))
+        else:
+            logger.info("[캐시 폴백] 온통청년 캐시에도 결과 없음")
+        return items
+
     async def search(self, query: YouthPolicySearchInput) -> list[YouthPolicyItem]:
         if not self._settings.youthcenter_policy_api_key:
-            logger.warning("YOUTHCENTER_POLICY_API_KEY is not configured; returning an availability guide.")
+            logger.warning("[캐시 폴백] YOUTHCENTER_POLICY_API_KEY 미설정 → 캐시 조회 시도")
+            cached = await self._fallback_search(query)
+            if cached:
+                return cached
             return [youth_policy_fallback_guide("온통청년 API 키가 설정되지 않아 현재 조회할 수 없어요.")]
 
         base_params = {
@@ -431,6 +454,10 @@ class YouthCenterRepository:
         if nearby_pool:
             return _nearby_youth_policies(nearby_pool, query.region)
         if failed_fetches and not successful_fetches:
+            logger.warning("[캐시 폴백] 온통청년 API 호출 전면 실패 → 캐시 조회 시도")
+            cached = await self._fallback_search(query)
+            if cached:
+                return cached
             return [
                 youth_policy_fallback_guide(
                     "온통청년 API가 일시적으로 응답하지 않아 정책 유무를 확인하지 못했어요. 잠시 후 다시 검색해주세요."

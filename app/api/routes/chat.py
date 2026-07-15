@@ -61,7 +61,17 @@ def _result_status_message(result: dict) -> str:
     }.get(result.get("intent", "GENERAL"), "대화 내용을 바탕으로 답변을 정리했어요.")
 
 
+def _format_cost(value: str | None) -> str | None:
+    """'582560' 같은 순수 숫자 문자열을 '582,560원'으로 바꾼다.
+    이미 단위/문자가 섞여 있거나 숫자가 아니면 원본 그대로 둔다."""
+
+    if not value or not value.isdigit():
+        return value
+    return f"{int(value):,}원"
+
+
 def _training_to_recommendation(item: dict) -> dict:
+    cost_text = _format_cost(item.get("actual_cost")) or _format_cost(item.get("cost")) or "문의 필요"
     policy = {
         "id": item.get("course_id", ""),
         "title": item.get("title", ""),
@@ -74,7 +84,7 @@ def _training_to_recommendation(item: dict) -> dict:
         "apply_start": item.get("start_date"),
         "apply_end": item.get("end_date"),
         "apply_method": item.get("contact") or "고용24 참조",
-        "support_content": f"훈련비: {item.get('actual_cost') or item.get('cost') or '문의 필요'}",
+        "support_content": f"훈련비: {cost_text}",
         "source_url": item.get("detail_url") or item.get("institution_url") or "",
         "match_scope": "nationwide",
         "distance_km": None,

@@ -658,11 +658,13 @@ def test_nearby_templates_label_results_as_reference_with_distance_warning():
     for response in (youth, business):
         assert "정확히 일치" in response
         assert "가까운 지역 참고" in response
-        assert "직선거리" in response
         assert "거주 요건" in response
 
 
 def test_scored_template_labels_scope_and_separates_score_from_evidence_coverage():
+    """세부 내용(추천 범위/적합도/근거 확인률 등)은 프론트 카드로 표시되므로,
+    템플릿 응답에는 개별 항목 수치가 아니라 짧은 안내 멘트만 담겨야 한다."""
+
     scored = score_policy(
         {"region": "성남시", "is_entrepreneur": True},
         _business_policy(region=["경기"]),
@@ -670,6 +672,7 @@ def test_scored_template_labels_scope_and_separates_score_from_evidence_coverage
 
     response = compose_scored_template([scored])
 
-    assert "추천 범위: 요청 지역 일치" in response
-    assert "추천 적합도: 40점" in response
-    assert "근거 확인률 40%" in response
+    assert "카드" in response
+    assert "추천 범위" not in response
+    assert "추천 적합도" not in response
+    assert "근거 확인률" not in response

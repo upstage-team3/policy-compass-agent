@@ -54,6 +54,11 @@ from app.graph.response_composer import (
 from app.graph.scoring import score_policy
 from app.graph.state import AgentState
 from app.repositories.policy import PolicyRepository
+from app.repositories.supabase_fallback import (
+    SupabaseRecruitmentInfoFallback,
+    SupabaseTrainingCourseFallback,
+    SupabaseYouthPolicyFallback,
+)
 from app.repositories.work24_recruitment import Work24RecruitmentRepository
 from app.repositories.work24_training import Work24TrainingRepository
 from app.repositories.youthcenter import YouthCenterRepository, is_generic_youth_policy_query
@@ -75,9 +80,9 @@ logger = logging.getLogger(__name__)
 _llm = SolarLLMClient()
 _policy_repo = PolicyRepository()
 _search_tool = PolicySearchTool(_policy_repo)
-_youth_policy_tool = YouthPolicySearchTool(YouthCenterRepository(_policy_repo))
-_training_tool = TrainingCourseSearchTool(Work24TrainingRepository())
-_recruitment_tool = RecruitmentInfoTool(Work24RecruitmentRepository())
+_youth_policy_tool = YouthPolicySearchTool(YouthCenterRepository(SupabaseYouthPolicyFallback()))
+_training_tool = TrainingCourseSearchTool(Work24TrainingRepository(SupabaseTrainingCourseFallback()))
+_recruitment_tool = RecruitmentInfoTool(Work24RecruitmentRepository(SupabaseRecruitmentInfoFallback()))
 
 # ---------------------------------------------------------------------------
 # Router Node
