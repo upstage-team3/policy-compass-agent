@@ -7,16 +7,21 @@ import httpx
 import pytest
 
 from app.graph import nodes
+from app.graph.search_contracts import SearchStatus
 from app.repositories.work24_recruitment import (
     Work24RecruitmentRepository,
+    Work24RecruitmentResponseError,
     is_personal_key_limited_response,
     normalize_recruitment_items,
     recruitment_fallback_guide,
 )
 from app.repositories.work24_training import (
+    Work24TrainingRepository,
+    Work24TrainingResponseError,
     default_training_period,
     normalize_training_courses,
     training_fallback_guide,
+    work24_training_area_code,
 )
 from app.repositories.youthcenter import (
     YouthCenterAPIUnavailableError,
@@ -28,6 +33,7 @@ from app.repositories.youthcenter import (
     normalize_youth_policy_items,
     normalize_youth_policy_json,
 )
+from app.tools.executor import YouthPolicySearchTool
 from app.tools.schemas import (
     RecruitmentInfoSearchInput,
     TrainingCourseSearchInput,
@@ -41,6 +47,99 @@ def test_default_training_period_uses_six_month_window():
 
     assert start == "20260710"
     assert end == "20270109"
+
+
+@pytest.mark.parametrize(
+    ("region", "expected_code"),
+    [
+        ("서울", "11"),
+        ("전남광주", "12"),
+        ("부산", "26"),
+        ("대구", "27"),
+        ("인천", "28"),
+        ("대전", "30"),
+        ("울산", "31"),
+        ("세종", "36"),
+        ("경기", "41"),
+        ("충북", "43"),
+        ("충남", "44"),
+        ("전북", "45"),
+        ("경북", "47"),
+        ("경남", "48"),
+        ("제주", "50"),
+        ("강원", "51"),
+    ],
+)
+def test_work24_training_area_code_uses_official_codes(region, expected_code):
+    assert work24_training_area_code(region) == expected_code
+
+
+async def test_training_repository_derives_area_code_from_region(monkeypatch):
+    captured_params: dict[str, str] = {}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, params):
+            captured_params.update(params)
+            return httpx.Response(
+                200,
+                text="<HRDNet><scn_list><trprId>T1</trprId><title>훈련</title></scn_list></HRDNet>",
+                request=httpx.Request("GET", url),
+            )
+
+    monkeypatch.setattr("app.repositories.work24_training.httpx.AsyncClient", FakeClient)
+    repository = Work24TrainingRepository()
+    repository._settings = SimpleNamespace(
+        employment24_training_api_key="test-key",
+        employment24_training_api_url="https://example.com/training",
+    )
+
+    items = await repository.search(TrainingCourseSearchInput(training_region="서울 강남구"))
+
+    assert items[0].course_id == "T1"
+    assert captured_params["srchTraArea1"] == "11"
+    assert captured_params["pageSize"] == "30"
+
+
+async def test_training_repository_keeps_explicit_area_code(monkeypatch):
+    captured_params: dict[str, str] = {}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, params):
+            captured_params.update(params)
+            return httpx.Response(
+                200,
+                text="<HRDNet><scn_list><trprId>T2</trprId><title>훈련</title></scn_list></HRDNet>",
+                request=httpx.Request("GET", url),
+            )
+
+    monkeypatch.setattr("app.repositories.work24_training.httpx.AsyncClient", FakeClient)
+    repository = Work24TrainingRepository()
+    repository._settings = SimpleNamespace(
+        employment24_training_api_key="test-key",
+        employment24_training_api_url="https://example.com/training",
+    )
+
+    await repository.search(TrainingCourseSearchInput(training_region="서울", training_region_code="99"))
+
+    assert captured_params["srchTraArea1"] == "99"
 
 
 def test_generic_youth_policy_query_recognizes_natural_broad_request_but_not_topic_request():
@@ -79,6 +178,11 @@ def test_normalize_training_courses_maps_core_fields():
     assert courses[0].title == "데이터 분석 실무"
     assert courses[0].institution == "서울AI직업학교"
     assert courses[0].detail_url == "https://example.com/course"
+
+
+def test_training_error_xml_is_not_treated_as_empty_search_result():
+    with pytest.raises(Work24TrainingResponseError):
+        normalize_training_courses("<response><error><message>temporary failure</message></error></response>")
 
 
 def test_training_fallback_guide_does_not_invent_course():
@@ -126,34 +230,32 @@ def test_normalize_recruitment_items_maps_optional_fields():
     assert items[0].company == "테스트회사"
 
 
-def test_normalize_allowed_recruitment_event_and_company_shapes():
+def test_recruitment_error_xml_is_not_treated_as_empty_search_result():
+    with pytest.raises(Work24RecruitmentResponseError):
+        normalize_recruitment_items(
+            "<response><error><message>temporary failure</message></error></response>",
+            "event",
+        )
+
+
+def test_normalize_allowed_recruitment_event_shape():
     event_xml = """
     <empEvList><empEvent><eventNo>E001</eventNo><eventNm>청년 채용박람회</eventNm>
     <area>서울</area><eventTerm>2026-07-20 ~ 2026-07-21</eventTerm><startDt>20260720</startDt>
     </empEvent></empEvList>
     """
-    company_xml = """
-    <dhsOpenEmpHireInfoList><dhsOpenEmpHireInfo><empCoNo>C001</empCoNo><coNm>테스트기업</coNm>
-    <coIntroSummaryCont>AI 서비스 기업</coIntroSummaryCont><homepg>https://example.com</homepg>
-    </dhsOpenEmpHireInfo></dhsOpenEmpHireInfoList>
-    """
-
     event = normalize_recruitment_items(event_xml, "event")[0]
-    company = normalize_recruitment_items(company_xml, "company")[0]
 
     assert event.item_type == "event"
     assert event.start_date == "2026-07-20"
     assert event.end_date == "2026-07-21"
-    assert company.item_type == "company"
-    assert company.company == "테스트기업"
 
 
 async def test_recruitment_repository_calls_only_personal_member_allowed_endpoints(monkeypatch):
-    called_urls: list[str] = []
+    called_requests: list[tuple[str, dict[str, str]]] = []
     payloads = {
         "210L21": "<dhsOpenEmpInfoList />",
         "210L11": "<empEvList />",
-        "210L31": "<dhsOpenEmpHireInfoList />",
     }
 
     class FakeClient:
@@ -167,7 +269,7 @@ async def test_recruitment_repository_calls_only_personal_member_allowed_endpoin
             return None
 
         async def get(self, url, params):
-            called_urls.append(url)
+            called_requests.append((url, dict(params)))
             endpoint = next(code for code in payloads if code in url)
             return httpx.Response(200, text=payloads[endpoint], request=httpx.Request("GET", url))
 
@@ -177,17 +279,26 @@ async def test_recruitment_repository_calls_only_personal_member_allowed_endpoin
         employment24_job_api_key="test-key",
         employment24_open_recruitment_api_url="https://example.com/210L21.do",
         employment24_job_event_api_url="https://example.com/210L11.do",
-        employment24_company_api_url="https://example.com/210L31.do",
     )
 
-    await repository.search(RecruitmentInfoSearchInput())
+    await repository.search(
+        RecruitmentInfoSearchInput(
+            desired_job="데이터 분석",
+            preferred_work_region="서울 강남구",
+            career_level="신입",
+        )
+    )
 
-    assert {url.rsplit("/", 1)[-1] for url in called_urls} == {
-        "210L11.do",
-        "210L21.do",
-        "210L31.do",
-    }
-    assert all("210L01" not in url for url in called_urls)
+    assert {url.rsplit("/", 1)[-1] for url, _ in called_requests} == {"210L11.do", "210L21.do"}
+    assert all("210L01" not in url and "210L31" not in url for url, _ in called_requests)
+    open_params = next(params for url, params in called_requests if "210L21" in url)
+    event_params = next(params for url, params in called_requests if "210L11" in url)
+    assert open_params["empWantedTitle"] == "데이터 분석"
+    assert open_params["empWantedCareerCd"] == "30"
+    assert event_params["keyword"] == "데이터 분석"
+    assert event_params["areaCd"] == "51"
+    assert open_params["display"] == "30"
+    assert event_params["display"] == "30"
 
 
 def test_normalize_youth_policy_items_maps_expected_xml_shape():
@@ -257,9 +368,66 @@ def test_normalize_youth_policy_json_maps_current_api_shape():
     assert item.title == "국민취업지원제도"
     assert item.organization == "고용노동부"
     assert "만 19~34세" in (item.target_summary or "")
+    assert item.min_age == 19
+    assert item.max_age == 34
+    assert item.age_restricted is True
     assert item.business_period == "2026-01-01 ~ 2026-12-31"
     assert item.business_end_date == "2026-12-31"
     assert item.detail_url == "https://example.com/apply"
+
+
+def test_normalize_youth_policy_json_treats_no_limit_and_zero_bounds_as_unrestricted():
+    payload = {
+        "result": {
+            "youthPolicyList": [
+                {
+                    "plcyNo": "NO-LIMIT",
+                    "plcyNm": "연령 제한 없음",
+                    "sprtTrgtAgeLmtYn": "N",
+                    "sprtTrgtMinAge": 19,
+                    "sprtTrgtMaxAge": 34,
+                },
+                {
+                    "plcyNo": "ZERO",
+                    "plcyNm": "0은 제한 없음",
+                    "sprtTrgtAgeLmtYn": "Y",
+                    "sprtTrgtMinAge": 0,
+                    "sprtTrgtMaxAge": 0,
+                },
+            ]
+        }
+    }
+
+    no_limit, zero_bounds = normalize_youth_policy_json(payload)
+
+    for item in (no_limit, zero_bounds):
+        assert item.min_age is None
+        assert item.max_age is None
+        assert item.age_restricted is False
+        assert "연령 제한 없음" in (item.target_summary or "")
+
+
+def test_normalize_youth_policy_json_handles_invalid_and_one_sided_age_bounds():
+    payload = {
+        "result": {
+            "youthPolicyList": [
+                {
+                    "plcyNo": "ONE-SIDED",
+                    "plcyNm": "최대 연령만 있음",
+                    "sprtTrgtAgeLmtYn": "Y",
+                    "sprtTrgtMinAge": "확인 필요",
+                    "sprtTrgtMaxAge": 39,
+                }
+            ]
+        }
+    }
+
+    item = normalize_youth_policy_json(payload)[0]
+
+    assert item.min_age is None
+    assert item.max_age == 39
+    assert item.age_restricted is True
+    assert "만 39세 이하" in (item.target_summary or "")
 
 
 def test_youth_search_terms_relax_broad_employment_phrase():
@@ -325,33 +493,7 @@ def test_youth_search_terms_do_not_replace_specific_query_with_broad_profile_top
     assert terms == ["고립 은둔"]
 
 
-async def test_youth_fetch_retries_once_after_server_error():
-    repository = YouthCenterRepository()
-
-    class RetryClient:
-        def __init__(self):
-            self.calls = 0
-
-        async def get(self, api_url, params):
-            del api_url, params
-            self.calls += 1
-            if self.calls == 1:
-                return httpx.Response(500, request=httpx.Request("GET", "https://example.com"))
-            return httpx.Response(
-                200,
-                request=httpx.Request("GET", "https://example.com"),
-                headers={"content-type": "application/json"},
-                json={"resultCode": 200, "result": {"youthPolicyList": []}},
-            )
-
-    client = RetryClient()
-    result = await repository._fetch(client, "https://example.com", {"pageNum": "1"})
-
-    assert result == []
-    assert client.calls == 2
-
-
-async def test_youth_fetch_raises_after_repeated_server_errors():
+async def test_youth_fetch_delegates_retry_to_graph_after_server_error():
     repository = YouthCenterRepository()
 
     class FailingClient:
@@ -367,7 +509,23 @@ async def test_youth_fetch_raises_after_repeated_server_errors():
     with pytest.raises(YouthCenterAPIUnavailableError):
         await repository._fetch(client, "https://example.com", {"pageNum": "1"})
 
-    assert client.calls == 2
+    assert client.calls == 1
+
+
+async def test_youth_fetch_treats_parseable_error_xml_as_unavailable():
+    repository = YouthCenterRepository()
+
+    class ErrorEnvelopeClient:
+        async def get(self, api_url, params):
+            del params
+            return httpx.Response(
+                200,
+                text="<response><error><message>temporary failure</message></error></response>",
+                request=httpx.Request("GET", api_url),
+            )
+
+    with pytest.raises(YouthCenterAPIUnavailableError):
+        await repository._fetch(ErrorEnvelopeClient(), "https://example.com", {"pageNum": "1"})
 
 
 async def test_youth_search_returns_availability_guide_when_every_fetch_fails(monkeypatch):
@@ -387,6 +545,31 @@ async def test_youth_search_returns_availability_guide_when_every_fetch_fails(mo
     assert len(result) == 1
     assert result[0].policy_id == "youthcenter-guide"
     assert "정책 유무를 확인하지 못했어요" in (result[0].fallback_reason or "")
+
+
+async def test_youth_search_preserves_partial_status_when_one_fetch_fails(monkeypatch):
+    repository = YouthCenterRepository()
+    repository._settings = SimpleNamespace(
+        youthcenter_policy_api_key="test-key",
+        youthcenter_policy_api_url="https://example.com/youth",
+    )
+    calls = 0
+
+    async def mixed_fetch(client, api_url, params):
+        nonlocal calls
+        del client, api_url, params
+        calls += 1
+        if calls == 1:
+            raise YouthCenterAPIUnavailableError
+        return [YouthPolicyItem(policy_id="all", title="전국 주거 정책", region="전국")]
+
+    monkeypatch.setattr(repository, "_fetch", mixed_fetch)
+    tool = YouthPolicySearchTool(repository)
+    outcome = await tool.execute_outcome(YouthPolicySearchInput(region="서울 강남구", keywords="주거"))
+
+    assert outcome.status is SearchStatus.PARTIAL
+    assert [item["policy_id"] for item in outcome.items] == ["all"]
+    assert outcome.warnings
 
 
 def test_youth_policy_region_filter_keeps_matching_and_nationwide_items():
@@ -436,7 +619,13 @@ async def test_training_profile_extracts_cloud_job_without_reasking():
 
     assert result["profile"]["region"] == "서울"
     assert result["profile"]["desired_job"] == "클라우드 엔지니어"
-    missing = await nodes.missing_slot_node({"request_kind": "training", "profile": result["profile"]})
+    missing = await nodes.missing_slot_node(
+        {
+            "request_kind": "training",
+            "profile": result["profile"],
+            "profile_delta": result["profile_delta"],
+        }
+    )
     assert missing["missing_slots"] == []
 
 

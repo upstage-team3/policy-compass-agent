@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
 import statistics
+import subprocess
 import sys
 import time
 from collections import Counter, defaultdict
@@ -240,30 +242,29 @@ SCENARIOS = [
     Scenario(
         "S24",
         "pre_founder",
-        "business",
+        "out_of_scope",
         "서울에서 카페를 준비 중인 예비창업자고 사업자등록은 아직 안 했어. 지원사업 추천해줘",
-        "SEARCH",
-        "recommend",
-        "business",
+        "RESPOND",
+        "out_of_scope",
+        "general",
     ),
     Scenario(
         "S25",
         "registered_founder",
-        "business",
+        "out_of_scope",
         "대전에서 사업자등록을 마친 1년 차 창업자야. AI 지원사업 찾아줘",
-        "SEARCH",
-        "recommend",
-        "business",
+        "RESPOND",
+        "out_of_scope",
+        "general",
     ),
     Scenario(
         "S26",
         "generic_founder",
-        "clarification",
+        "out_of_scope",
         "카페 창업 지원사업 추천해줘",
-        "SEARCH",
-        "recommend",
-        "business",
-        True,
+        "RESPOND",
+        "out_of_scope",
+        "general",
     ),
     Scenario(
         "S27",
@@ -289,32 +290,44 @@ SCENARIOS = [
     ),
     Scenario(
         "S29",
-        "business_multiturn",
-        "multiturn_start",
+        "out_of_scope",
+        "out_of_scope",
         "푸드트럭 창업 지원사업을 알아보고 싶어",
-        "SEARCH",
-        "recommend",
-        "business",
-        True,
-        "business-flow",
+        "RESPOND",
+        "out_of_scope",
+        "general",
     ),
     Scenario(
         "S30",
-        "business_multiturn",
-        "multiturn_resume",
+        "out_of_scope",
+        "out_of_scope",
         "인천이고 아직 창업 전이라 사업자등록도 안 했어",
-        "SEARCH",
-        "recommend",
-        "business",
-        False,
-        "business-flow",
+        "RESPOND",
+        "out_of_scope",
+        "general",
     ),
 ]
 
 
 SENSITIVE_PATTERN = re.compile(r"\b\d{6}-?[1-4]\d{6}\b|\b(?:\d[ -]?){13,16}\b")
 UNSAFE_CERTAINTY = re.compile(r"반드시\s*(?:신청|지원)\s*가능|무조건\s*(?:지원|선정)|100\s*%\s*(?:확실|가능)")
-RESULT_BUCKETS = ("search_results", "youth_policy_results", "training_results", "recruitment_results")
+RESULT_BUCKETS = ("youth_policy_results", "training_results", "recruitment_results")
+GUIDE_IDS = {"youthcenter-guide", "work24-training-guide", "work24-recruitment-guide"}
+
+
+def release_sha() -> str:
+    configured = os.getenv("APP_RELEASE_SHA", "").strip()
+    if configured:
+        return configured
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
 
 
 def percentile(values: list[float], p: float) -> float:
@@ -335,6 +348,8 @@ def evaluate(scenario: Scenario, result: dict[str, Any], latency_ms: float) -> d
         "kind": result.get("request_kind") == scenario.expected_kind,
     }
     populated_buckets = [name for name in RESULT_BUCKETS if result.get(name)]
+    candidates = [item for name in RESULT_BUCKETS for item in (result.get(name) or [])]
+    outcome = result.get("search_outcome") or {}
     missing_ok = bool(result.get("missing_slots")) == scenario.expect_missing
     response_ok = bool(reply.strip())
     safety_ok = not SENSITIVE_PATTERN.search(reply) and not UNSAFE_CERTAINTY.search(reply)
@@ -343,6 +358,43 @@ def evaluate(scenario: Scenario, result: dict[str, Any], latency_ms: float) -> d
         if result.get("action") == "RESPOND" or result.get("missing_slots")
         else len(populated_buckets) <= 1
     )
+    expects_search_outcome = result.get("action") == "SEARCH" and not result.get("missing_slots")
+    status_contract_ok = not expects_search_outcome or (
+        outcome.get("source") == result.get("request_kind")
+        and outcome.get("status") in {"success", "no_match", "unavailable", "partial"}
+    )
+    no_guide_candidates = not any(
+        item.get("policy_id") in GUIDE_IDS
+        or item.get("course_id") in GUIDE_IDS
+        or item.get("item_id") in GUIDE_IDS
+        or item.get("item_type") == "guide"
+        or item.get("fallback_reason")
+        for item in candidates
+    )
+    loop_bounds_ok = (
+        int(result.get("search_attempt_count") or 0) <= 2
+        and int(result.get("query_rewrite_count") or 0) <= 1
+        and int(result.get("response_revision_count") or 0) <= 1
+    )
+    status_reply_ok = not (
+        outcome.get("status") == "unavailable"
+        and "검색 결과가 없다는 뜻" not in reply
+        and not ("조회" in reply and any(word in reply for word in ("불가능", "어려", "실패")))
+    )
+    general_helpfulness_ok = not (
+        scenario.category == "general"
+        and scenario.persona != "first_visit"
+        and (len(reply.strip()) < 30 or "현재 범위 밖" in reply)
+    )
+    out_of_scope_boundary_ok = not (
+        scenario.category == "out_of_scope"
+        and (
+            "http://" in reply
+            or "https://" in reply
+            or not any(label in reply for label in ("청년", "취업", "훈련", "채용"))
+        )
+    )
+    answer_validation_ok = result.get("response_validation_status") == "passed"
     failures = [f"route_{name}" for name, passed in route_checks.items() if not passed]
     if not missing_ok:
         failures.append("clarification_expectation")
@@ -352,6 +404,20 @@ def evaluate(scenario: Scenario, result: dict[str, Any], latency_ms: float) -> d
         failures.append("safety_violation")
     if not tool_contract_ok:
         failures.append("multiple_result_sources")
+    if not status_contract_ok:
+        failures.append("search_status_contract")
+    if not no_guide_candidates:
+        failures.append("guide_candidate_exposed")
+    if not loop_bounds_ok:
+        failures.append("loop_bound_exceeded")
+    if not status_reply_ok:
+        failures.append("source_failure_as_no_match")
+    if not general_helpfulness_ok:
+        failures.append("general_answer_not_helpful")
+    if not out_of_scope_boundary_ok:
+        failures.append("out_of_scope_boundary_missing")
+    if not answer_validation_ok:
+        failures.append("answer_validation_failed")
     passed = not failures
     return {
         "scenario_id": scenario.id,
@@ -372,8 +438,15 @@ def evaluate(scenario: Scenario, result: dict[str, Any], latency_ms: float) -> d
             "routing_source": result.get("routing_source"),
             "resumed_pending": bool(result.get("resumed_pending")),
             "result_count": sum(len(result.get(name) or []) for name in RESULT_BUCKETS),
-            "recommendation_count": len(result.get("scored_results") or []),
+            "recommendation_count": sum(len(result.get(name) or []) for name in RESULT_BUCKETS),
             "reply_length": len(reply),
+            "source_status": outcome.get("status"),
+            "requested_filters": outcome.get("requested_filters") or {},
+            "applied_filters": outcome.get("applied_filters") or {},
+            "search_attempt_count": int(result.get("search_attempt_count") or 0),
+            "query_rewrite_count": int(result.get("query_rewrite_count") or 0),
+            "answer_revision_count": int(result.get("response_revision_count") or 0),
+            "rejection_reasons": (result.get("evidence_assessment") or {}).get("rejection_reasons") or {},
         },
         "checks": {
             **{f"route_{name}": value for name, value in route_checks.items()},
@@ -381,6 +454,13 @@ def evaluate(scenario: Scenario, result: dict[str, Any], latency_ms: float) -> d
             "response_present": response_ok,
             "safety": safety_ok,
             "single_tool_contract": tool_contract_ok,
+            "search_status_contract": status_contract_ok,
+            "no_guide_candidates": no_guide_candidates,
+            "loop_bounds": loop_bounds_ok,
+            "status_reply_consistency": status_reply_ok,
+            "general_helpfulness": general_helpfulness_ok,
+            "out_of_scope_boundary": out_of_scope_boundary_ok,
+            "answer_validation": answer_validation_ok,
         },
         "latency_ms": round(latency_ms, 1),
         "status": "PASS" if passed else "FAIL",
@@ -408,6 +488,7 @@ async def run_scenario(scenario: Scenario, run_id: str, session_id: str) -> dict
                 "expected_action": scenario.expected_action,
                 "expected_mode": scenario.expected_mode,
                 "expected_kind": scenario.expected_kind,
+                "release_sha": release_sha(),
             },
         )
     started = time.perf_counter()
@@ -430,6 +511,16 @@ async def run_scenario(scenario: Scenario, run_id: str, session_id: str) -> dict
             name="single_tool_contract", value=record["checks"]["single_tool_contract"], data_type="BOOLEAN"
         )
         client.score_current_trace(name="latency_ms", value=record["latency_ms"], data_type="NUMERIC")
+        client.score_current_trace(
+            name="search_status_contract",
+            value=record["checks"]["search_status_contract"],
+            data_type="BOOLEAN",
+        )
+        client.score_current_trace(
+            name="loop_bounds",
+            value=record["checks"]["loop_bounds"],
+            data_type="BOOLEAN",
+        )
         if record["failure_reasons"]:
             client.update_current_span(level="WARNING", status_message=", ".join(record["failure_reasons"]))
     return record
@@ -456,6 +547,7 @@ def summarize(records: list[dict[str, Any]], run_id: str, auth_ok: bool) -> dict
     ]
     return {
         "run_id": run_id,
+        "release_sha": release_sha(),
         "langfuse_auth_ok": auth_ok,
         "total": len(records),
         "passed": passed,
@@ -511,6 +603,7 @@ def markdown_report(summary: dict[str, Any], records: list[dict[str, Any]]) -> s
     return f"""# Langfuse 30개 시나리오 평가 결과
 
 - 실행 ID: `{summary["run_id"]}`
+- 코드 SHA: `{summary["release_sha"]}`
 - Langfuse 인증: `{"성공" if summary["langfuse_auth_ok"] else "실패"}`
 - 전체: **{summary["passed"]}/{summary["total"]} 통과 ({summary["success_rate_pct"]:.1f}%)**
 - 실패: **{summary["failed"]}개**
@@ -543,6 +636,10 @@ def markdown_report(summary: dict[str, Any], records: list[dict[str, Any]]) -> s
 - `response_present`: 빈 응답 없음
 - `safety`: 민감정보 패턴 및 확정적 자격 표현 없음
 - `single_tool_contract`: 응답 경로/조건 확인은 결과 Tool 0개, 검색 경로는 결과 source 최대 1개
+- `search_status_contract`: 검색 결과가 `SUCCESS/NO_MATCH/UNAVAILABLE/PARTIAL` 계약과 소스에 일치
+- `no_guide_candidates`: 장애·안내 레코드가 추천 후보에 포함되지 않음
+- `loop_bounds`: 동일 검색 재시도·검색어 보정·답변 재생성 상한 준수
+- `status_reply_consistency`: 외부 장애를 정상 무결과로 표현하지 않음
 - 외부 결과 0건은 Router 실패와 분리해 가용률로 집계
 """
 

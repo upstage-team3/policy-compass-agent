@@ -1,9 +1,4 @@
-"""공공정책 데이터 소스 사이의 지역 표현을 한 곳에서 정규화한다.
-
-온통청년은 법정시군구코드, 기업마당은 제한된 시·도 해시태그를 사용한다.
-사용자가 입력한 지역명은 그대로 보존하되 외부 API 호출과 후보 비교에는 이
-모듈이 반환하는 표준 시·도명과 코드를 사용한다.
-"""
+"""사용자 지역 표현과 온통청년 법정시군구코드를 정규화한다."""
 
 from __future__ import annotations
 
@@ -16,27 +11,6 @@ from typing import Literal
 from app.core.administrative_regions import MUNICIPALITY_ROWS
 
 RegionMatchScope = Literal["exact", "nationwide", "mismatch", "unknown"]
-
-SIDO_ORDER = (
-    "서울",
-    "전남광주",
-    "부산",
-    "대구",
-    "인천",
-    "광주",
-    "대전",
-    "울산",
-    "세종",
-    "경기",
-    "강원",
-    "충북",
-    "충남",
-    "전북",
-    "전남",
-    "경북",
-    "경남",
-    "제주",
-)
 
 SIDO_CODE_PREFIXES = {
     "서울": "11",
@@ -58,47 +32,6 @@ SIDO_CODE_PREFIXES = {
     "강원": "51",
     "전북": "52",
 }
-
-# 기업마당은 광주와 전남을 하나의 공식 해시태그로 제공한다.
-BIZINFO_REGION_TAGS = (
-    "서울",
-    "부산",
-    "대구",
-    "인천",
-    "전남광주",
-    "대전",
-    "울산",
-    "세종",
-    "경기",
-    "강원",
-    "충북",
-    "충남",
-    "전북",
-    "경북",
-    "경남",
-    "제주",
-)
-_BIZINFO_SPLIT_REGION_TAGS = frozenset(
-    {
-        "서울",
-        "부산",
-        "대구",
-        "인천",
-        "광주",
-        "대전",
-        "울산",
-        "세종",
-        "경기",
-        "강원",
-        "충북",
-        "충남",
-        "전북",
-        "전남",
-        "경북",
-        "경남",
-        "제주",
-    }
-)
 
 # 도로 이동 거리가 아니라 시·도 대표 좌표 간 직선거리다. 전국 시군구에
 # 동일한 동작을 보장하고, 별도 좌표가 검증된 일부 지역만 더 세밀하게 쓴다.
@@ -258,6 +191,28 @@ _EXACT_MUNICIPALITY_INDEX, _CONTAINED_MUNICIPALITY_INDEX = _build_municipality_i
 _CONTAINED_ALIASES = tuple(sorted(_CONTAINED_MUNICIPALITY_INDEX, key=len, reverse=True))
 
 
+def _build_suffixless_municipality_index() -> dict[str, tuple[_Municipality, ...]]:
+    index: dict[str, list[_Municipality]] = defaultdict(list)
+    for item in _MUNICIPALITIES:
+        leaf_name = _compact(item.name.split()[-1])
+        if len(leaf_name) <= 2 or not leaf_name.endswith(("시", "군", "구")):
+            continue
+        alias = leaf_name[:-1]
+        if len(alias) >= 2 and item not in index[alias]:
+            index[alias].append(item)
+    return {alias: tuple(items) for alias, items in index.items()}
+
+
+_SUFFIXLESS_MUNICIPALITY_INDEX = _build_suffixless_municipality_index()
+_SUFFIXLESS_ALIASES = tuple(sorted(_SUFFIXLESS_MUNICIPALITY_INDEX, key=len, reverse=True))
+_SUFFIXLESS_REGION_CONTEXT = re.compile(
+    r"^[,.:;!?~]*(?:"
+    r"(?:에|에서|으로|로)?(?:거주|사는|살고|살아|살아요|삽니다|살며)|"
+    r"(?:이고|이며)?(?:만)?\d{1,3}(?:살|세)"
+    r")"
+)
+
+
 def _formal_sido_hint(compact: str) -> str | None:
     matches = [(len(alias), sido) for alias, sido in _LOCAL_AUTHORITY_ALIASES.items() if alias in compact]
     return max(matches, default=(0, None))[1]
@@ -296,6 +251,30 @@ def _best_contained_match(compact: str) -> tuple[str | None, tuple[_Municipality
     for alias in _CONTAINED_ALIASES:
         if alias in compact:
             return alias, _CONTAINED_MUNICIPALITY_INDEX[alias]
+    return None, ()
+
+
+def _best_contextual_suffixless_match(value: str) -> tuple[str | None, tuple[_Municipality, ...]]:
+    """Find suffix-omitted municipalities only in explicit location-answer context.
+
+    Treating every short name as an arbitrary substring turns ordinary Korean
+    words such as "예산 지원" or "창의성 교육" into regions.  Exact short
+    inputs remain supported by the exact index; sentence-level matching is
+    limited to residence/location expressions and an adjacent age answer.
+    """
+
+    for alias in _SUFFIXLESS_ALIASES:
+        for match in re.finditer(re.escape(alias), value):
+            prefix = value[: match.start()]
+            previous_character = value[match.start() - 1] if match.start() else ""
+            has_left_boundary = not previous_character or not re.match(r"[0-9A-Za-z가-힣]", previous_character)
+            compact_prefix = _compact(prefix)
+            has_sido_prefix = compact_prefix in _SIDO_ALIASES or compact_prefix in _LOCAL_AUTHORITY_ALIASES
+            if not has_left_boundary and not has_sido_prefix:
+                continue
+            suffix = _compact(value[match.end() :])
+            if _SUFFIXLESS_REGION_CONTEXT.match(suffix):
+                return alias, _SUFFIXLESS_MUNICIPALITY_INDEX[alias]
     return None, ()
 
 
@@ -366,6 +345,14 @@ def resolve_region(value: str | None) -> RegionResolution | None:
             return _municipality_resolution(value, unique_match)
         return None
 
+    contextual_alias, contextual_candidates = _best_contextual_suffixless_match(value)
+    if contextual_candidates:
+        contextual_hint = formal_hint or _any_sido_hint(compact)
+        contextual_match = _select_municipality(contextual_candidates, contextual_hint)
+        if contextual_match:
+            return _municipality_resolution(value, contextual_match)
+        return None
+
     sido_hint = formal_hint or _short_sido_hint(compact) or _any_sido_hint(compact)
     return _sido_resolution(value, sido_hint) if sido_hint else None
 
@@ -395,133 +382,14 @@ def user_region_reference(value: str | None) -> str | None:
         return None
 
     matched_alias, candidates = _best_contained_match(_compact(value))
-    return matched_alias if candidates else None
+    if candidates:
+        return matched_alias
+    contextual_alias, contextual_candidates = _best_contextual_suffixless_match(value)
+    return contextual_alias if contextual_candidates else None
 
 
 def _equivalent_sidos(sido: str) -> frozenset[str]:
     return _EQUIVALENT_SIDO_GROUP if sido in _EQUIVALENT_SIDO_GROUP else frozenset({sido})
-
-
-def bizinfo_region_tag(value: str | None) -> str | None:
-    resolved = resolve_region(value)
-    if not resolved:
-        return None
-    if resolved.sido in _EQUIVALENT_SIDO_GROUP:
-        return "전남광주"
-    return resolved.sido
-
-
-def normalize_bizinfo_regions(hashtags: str | None) -> list[str]:
-    """기업마당 공식 해시태그를 앱의 시·도 목록으로 변환한다."""
-
-    tokens = {token.strip().lstrip("#") for token in (hashtags or "").split(",") if token.strip().lstrip("#")}
-    official = tokens.intersection(BIZINFO_REGION_TAGS)
-    if set(BIZINFO_REGION_TAGS).issubset(official) or _BIZINFO_SPLIT_REGION_TAGS.issubset(tokens):
-        return ["전국"]
-
-    matched: set[str] = set()
-    for token in tokens:
-        if token == "전남광주":
-            matched.update({"광주", "전남"})
-            continue
-        resolved = resolve_region(token)
-        if resolved and (token in BIZINFO_REGION_TAGS or token in _SIDO_ALIASES):
-            matched.add(resolved.sido)
-    return [sido for sido in SIDO_ORDER if sido in matched]
-
-
-_BIZINFO_LOCAL_CONSTRAINT_MARKERS = (
-    "소재",
-    "소재지",
-    "본점",
-    "본사",
-    "사업장",
-    "이전",
-    "전입",
-    "설립",
-    "관내",
-    "도내",
-    "지역기업",
-    "지역창업기업",
-    "지역스타트업",
-    "지역소상공인",
-)
-_BIZINFO_RELOCATION_MARKERS = ("이전", "전입", "설립")
-_BIZINFO_UNRESTRICTED_MARKERS = ("지역제한없음", "지역무관")
-
-
-def _referenced_sidos(value: str | None) -> set[str]:
-    compact = _compact(value or "")
-    if not compact:
-        return set()
-
-    matched: set[str] = set()
-    for alias, sido in _SIDO_ALIASES.items():
-        if alias in compact:
-            matched.add(sido)
-
-    formal_hint = _formal_sido_hint(compact)
-    for alias in _CONTAINED_ALIASES:
-        if alias not in compact:
-            continue
-        municipality = _select_municipality(_CONTAINED_MUNICIPALITY_INDEX[alias], formal_hint)
-        if municipality:
-            matched.add(municipality.sido)
-    return matched
-
-
-def _bizinfo_local_restriction_regions(
-    title: str | None,
-    summary: str | None,
-    agency: str | None,
-) -> list[str]:
-    """공고 본문의 소재지·이전 조건에 명시된 지역만 보수적으로 추출한다."""
-
-    compact_summary = _compact(re.sub(r"<[^>]+>", " ", summary or ""))
-    if not compact_summary:
-        return []
-
-    has_relocation_condition = any(marker in compact_summary for marker in _BIZINFO_RELOCATION_MARKERS)
-    if any(marker in compact_summary for marker in _BIZINFO_UNRESTRICTED_MARKERS) and not has_relocation_condition:
-        return []
-
-    matched: set[str] = set()
-    for marker in _BIZINFO_LOCAL_CONSTRAINT_MARKERS:
-        start = 0
-        while (position := compact_summary.find(marker, start)) >= 0:
-            window = compact_summary[max(0, position - 80) : position + len(marker) + 80]
-            matched.update(_referenced_sidos(window))
-            start = position + len(marker)
-
-    if not matched and any(marker in compact_summary for marker in _BIZINFO_LOCAL_CONSTRAINT_MARKERS):
-        context_regions = _referenced_sidos(" ".join(value for value in (title, agency) if value))
-        if len(context_regions) == 1:
-            matched.update(context_regions)
-
-    return [sido for sido in SIDO_ORDER if sido in matched]
-
-
-def bizinfo_effective_regions(
-    hashtags: str | None,
-    *,
-    title: str | None = None,
-    summary: str | None = None,
-    agency: str | None = None,
-) -> list[str]:
-    """기업마당 태그와 공고의 명시적 소재지 조건을 교차 검증한다.
-
-    기업마당은 지역 제한이 있는 일부 지자체 공고에도 모든 지역 태그를
-    제공한다. 본문에 소재지·이전 조건이 명시돼 있으면 그 지역을 우선하고,
-    근거가 없을 때만 공식 태그의 전국 판정을 유지한다.
-    """
-
-    compact_summary = _compact(re.sub(r"<[^>]+>", " ", summary or ""))
-    has_relocation_condition = any(marker in compact_summary for marker in _BIZINFO_RELOCATION_MARKERS)
-    if any(marker in compact_summary for marker in _BIZINFO_UNRESTRICTED_MARKERS) and not has_relocation_condition:
-        return ["전국"]
-
-    restrictions = _bizinfo_local_restriction_regions(title, summary, agency)
-    return restrictions or normalize_bizinfo_regions(hashtags)
 
 
 def region_match_scope(
@@ -572,28 +440,6 @@ def region_distance_km(
                 )
             )
     return round(min(distances), 1) if distances else None
-
-
-def nearest_sidos(region: str | None) -> list[tuple[str, float]]:
-    origin = resolve_region(region)
-    if not origin:
-        return []
-    origin_equivalents = _equivalent_sidos(origin.sido)
-    values = [
-        (
-            sido,
-            round(
-                _haversine_km(
-                    (origin.latitude, origin.longitude),
-                    SIDO_CENTERS[sido],
-                ),
-                1,
-            ),
-        )
-        for sido in BIZINFO_REGION_TAGS
-        if not _equivalent_sidos(sido).intersection(origin_equivalents)
-    ]
-    return sorted(values, key=lambda item: item[1])
 
 
 def youth_codes(zip_codes: str | None) -> list[str]:

@@ -9,11 +9,47 @@ from urllib.parse import quote_plus
 
 import httpx
 
-from app.core.config import get_settings
+from app.core.config import get_settings, source_http_timeout
 from app.core.http import log_external_api_error
+from app.core.regions import resolve_region
+from app.core.xml_utils import xml_error_message
 from app.tools.schemas import TrainingCourseItem, TrainingCourseSearchInput
 
 logger = logging.getLogger(__name__)
+
+_POST_FILTER_FETCH_MULTIPLIER = 3
+
+WORK24_TRAINING_AREA_CODES = {
+    "서울": "11",
+    "전남광주": "12",
+    "부산": "26",
+    "대구": "27",
+    "인천": "28",
+    "대전": "30",
+    "울산": "31",
+    "세종": "36",
+    "경기": "41",
+    "충북": "43",
+    "충남": "44",
+    "전북": "45",
+    "경북": "47",
+    "경남": "48",
+    "제주": "50",
+    "강원": "51",
+}
+_WORK24_COMBINED_AREA_ALIASES = {"광주": "전남광주", "전남": "전남광주"}
+
+
+def work24_training_area_code(region: str | None) -> str | None:
+    """고용24 훈련과정 API의 srchTraArea1 코드로 사용자 지역을 변환한다."""
+
+    if not region:
+        return None
+    resolved = resolve_region(region)
+    if resolved is None:
+        return None
+    area = _WORK24_COMBINED_AREA_ALIASES.get(resolved.sido, resolved.sido)
+    return WORK24_TRAINING_AREA_CODES.get(area)
 
 
 def _compact_text(value: str | None) -> str | None:
@@ -36,6 +72,8 @@ def default_training_period(today: date | None = None) -> tuple[str, str]:
 
 def normalize_training_courses(xml_text: str) -> list[TrainingCourseItem]:
     root = ET.fromstring(xml_text)
+    if error := xml_error_message(root, record_tags={"scn_list"}):
+        raise Work24TrainingResponseError(error)
     records = root.findall(".//scn_list")
     courses: list[TrainingCourseItem] = []
 
@@ -64,6 +102,10 @@ def normalize_training_courses(xml_text: str) -> list[TrainingCourseItem]:
         courses.append(item)
 
     return courses
+
+
+class Work24TrainingResponseError(ValueError):
+    """The API returned valid XML that explicitly represents a failure."""
 
 
 def _build_work24_training_search_url(query: TrainingCourseSearchInput) -> str:
@@ -161,20 +203,23 @@ class Work24TrainingRepository:
             "returnType": "XML",
             "outType": "1",
             "pageNum": str(query.page),
-            "pageSize": str(query.page_size),
+            # Work24 only supports a broad 시·도 filter. Fetch a bounded pool
+            # before the graph applies an exact 시·군·구 evidence gate.
+            "pageSize": str(min(query.page_size * _POST_FILTER_FETCH_MULTIPLIER, 100)),
             "srchTraStDt": query.training_start_date_from or start,
             "srchTraEndDt": query.training_start_date_to or end,
             "sort": "ASC",
             "sortCol": "2",
         }
-        if query.training_region_code:
-            params["srchTraArea1"] = query.training_region_code
+        training_region_code = query.training_region_code or work24_training_area_code(query.training_region)
+        if training_region_code:
+            params["srchTraArea1"] = training_region_code
         search_keyword = _compact_training_keyword(query.desired_job) or _compact_training_keyword(query.keywords)
         if search_keyword:
             params["srchTraProcessNm"] = search_keyword
 
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=source_http_timeout(self._settings)) as client:
                 response = await client.get(self._settings.employment24_training_api_url, params=params)
                 response.raise_for_status()
         except Exception as exc:  # noqa: BLE001
@@ -187,13 +232,13 @@ class Work24TrainingRepository:
 
         try:
             items = normalize_training_courses(response.text)
-        except ET.ParseError:
+        except (ET.ParseError, Work24TrainingResponseError):
             logger.warning("고용24 훈련과정 XML 파싱 실패", exc_info=True)
             logger.warning("[캐시 폴백] 고용24 훈련과정 응답 파싱 실패 → 캐시 조회 시도")
             cached = await self._fallback_search(query)
             if cached:
                 return cached
-            return [training_fallback_guide("고용24 훈련과정 응답 파싱 실패", query)]
+            return [training_fallback_guide("고용24 훈련과정 응답 오류로 조회할 수 없음", query)]
 
         if items:
             return items

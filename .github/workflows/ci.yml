@@ -1,7 +1,7 @@
 # Policy Compass Agent CI 워크플로우
 #
 # 이 파일이 하는 일: 코드가 push되거나 PR이 생성될 때 GitHub이 자동으로
-# "코드 품질 검사(lint) → 단위 테스트(test) → PR 결과 코멘트 → AI 코드 리뷰"를 실행합니다.
+# "코드 품질 검사 → 백엔드/프런트 테스트 → 이미지 빌드 → PR 결과 코멘트"를 실행합니다.
 # 즉, 불량 코드가 main에 합쳐지기 전에 기계가 먼저 검사해 주는 "자동 수문장"입니다.
 #
 # 위치 규칙: 저장소의 `.github/workflows/` 폴더 안에 있는 .yml 파일을
@@ -10,12 +10,9 @@
 # 주요 Job (각 Job은 독립된 가상머신에서 실행됨):
 #   1. lint:      Ruff를 사용한 코드 품질 검사
 #   2. test:      pytest를 사용한 단위 테스트 (lint 성공 시에만 실행)
-#   3. comment:   PR에 테스트 결과 코멘트 (성공/실패와 무관하게 항상 실행)
-#   4. ai-review: AI(Solar)가 변경사항(diff)을 분석하고 PR에 리뷰 코멘트
-#
-# 필요한 GitHub Secrets (repo → Settings → Secrets and variables → Actions 에 등록):
-#   - UPSTAGE_API_KEY: 테스트 및 AI 리뷰용 LLM API 키
-#   ※ .env는 커밋하지 않으므로 GitHub 서버는 키를 모름 → Secrets에 등록해야 함
+#   3. frontend:  브라우저 저장 회귀 테스트와 production build
+#   4. image:     실제 Docker 이미지 빌드
+#   5. comment:   PR에 전체 결과 코멘트
 
 # 워크플로우 이름 (Actions 탭에 표시됨)
 name: Policy Compass Agent CI
@@ -30,6 +27,10 @@ on:
       - 'app/**'
       - 'tests/**'
       - 'frontend/**'
+      - 'data/**'
+      - 'scripts/**'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/**'
@@ -41,6 +42,10 @@ on:
       - 'app/**'
       - 'tests/**'
       - 'frontend/**'
+      - 'data/**'
+      - 'scripts/**'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/**'
@@ -86,11 +91,11 @@ jobs:
       - name: Run Ruff (lint)
         # 린트: 안 쓰는 import·문법 실수 등을 잡음
         # --output-format=github → 문제 위치가 PR 코드 라인에 표시됨
-        run: uv run ruff check app/ tests/ --output-format=github
+        run: uv run ruff check app/ tests/ scripts/ data/scripts/ --output-format=github
 
       - name: Run Ruff (format)
         # 포맷 검사: --check 는 "고치지 말고 규칙에 맞는지 확인만" (다르면 실패)
-        run: uv run ruff format app/ tests/ --check
+        run: uv run ruff format app/ tests/ scripts/ data/scripts/ --check
 
   # ═══════════════════════════════════════════════════════════════
   # Job 2: Test (단위 테스트)
@@ -113,12 +118,43 @@ jobs:
         run: uv sync --group dev
 
       - name: Run tests
-        # env: 이 스텝에서만 쓰는 환경변수.
-        # ${{ secrets.XXX }} = repo Settings에 등록해 둔 Secrets 값을 꺼내 씀
-        # (로그에는 *** 로 가려져서 안전)
-        env:
-          UPSTAGE_API_KEY: ${{ secrets.UPSTAGE_API_KEY }}
         run: uv run pytest tests/ -v --tb=short
+
+  frontend:
+    name: Frontend Test and Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm test
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+  image:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [test, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: policy-compass-agent:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   # ═══════════════════════════════════════════════════════════════
   # Job 3: Comment (PR에 결과 리포트 코멘트 달기)
@@ -129,7 +165,7 @@ jobs:
     # if: always() → 앞의 Job이 실패했어도 실행 (실패 결과도 리포트해야 하므로)
     # && PR 이벤트일 때만 (push에는 코멘트 달 곳이 없음)
     if: always() && github.event_name == 'pull_request'
-    needs: [lint, test]           # 두 Job의 결과(needs.*.result)를 참조하기 위해 명시
+    needs: [lint, test, frontend, image]
     permissions:
       pull-requests: write        # PR에 코멘트를 달 수 있는 권한 부여
     steps:
@@ -139,10 +175,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LINT_RESULT: ${{ needs.lint.result }}    # success / failure / skipped
           TEST_RESULT: ${{ needs.test.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          IMAGE_RESULT: ${{ needs.image.result }}
         run: |
           # 이모지 설정
           if [ "$LINT_RESULT" == "success" ]; then LINT_ICON="✅"; else LINT_ICON="❌"; fi
           if [ "$TEST_RESULT" == "success" ]; then TEST_ICON="✅"; else TEST_ICON="❌"; fi
+          if [ "$FRONTEND_RESULT" == "success" ]; then FRONTEND_ICON="✅"; else FRONTEND_ICON="❌"; fi
+          if [ "$IMAGE_RESULT" == "success" ]; then IMAGE_ICON="✅"; else IMAGE_ICON="❌"; fi
           if [ "$TEST_RESULT" == "skipped" ]; then TEST_ICON="⚪"; fi
 
           # 코멘트 내용(마크다운 표) 작성
@@ -152,9 +192,11 @@ jobs:
           echo "|----------|--------|" >> status_report.md
           echo "| **Lint** | $LINT_ICON $LINT_RESULT |" >> status_report.md
           echo "| **Test** | $TEST_ICON $TEST_RESULT |" >> status_report.md
+          echo "| **Frontend** | $FRONTEND_ICON $FRONTEND_RESULT |" >> status_report.md
+          echo "| **Docker image** | $IMAGE_ICON $IMAGE_RESULT |" >> status_report.md
           echo "" >> status_report.md
 
-          if [ "$LINT_RESULT" != "success" ] || [ "$TEST_RESULT" == "failure" ]; then
+          if [ "$LINT_RESULT" != "success" ] || [ "$TEST_RESULT" != "success" ] || [ "$FRONTEND_RESULT" != "success" ] || [ "$IMAGE_RESULT" != "success" ]; then
              echo "⚠️ **테스트가 실패했습니다.** 로그를 확인해주세요." >> status_report.md
              EXIT_CODE=1
           else
@@ -167,43 +209,3 @@ jobs:
 
           # 실패 시 이 Job도 실패 처리 (PR에 빨간불 표시)
           exit $EXIT_CODE
-
-  # ═══════════════════════════════════════════════════════════════
-  # Job 4: AI Code Review (Solar LLM이 변경사항을 리뷰)
-  # scripts/ai_reviewer.py가 있는 경우에만 실행한다.
-  # ═══════════════════════════════════════════════════════════════
-  ai-review:
-    name: AI Review
-    runs-on: ubuntu-latest
-    needs: lint
-    if: github.event_name == 'pull_request'   # PR일 때만 리뷰
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0          # 전체 git 히스토리 내려받기 (main과의 diff 계산에 필요)
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      - uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
-
-      - name: Install dependencies
-        run: uv sync --group dev
-
-      - name: Run AI Reviewer
-        if: ${{ hashFiles('scripts/ai_reviewer.py') != '' }}
-        env:
-          UPSTAGE_API_KEY: ${{ secrets.UPSTAGE_API_KEY }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # 리뷰 스크립트 실행 (git diff → LLM 리뷰 생성 → 출력)
-          REVIEW=$(uv run python scripts/ai_reviewer.py)
-
-          # gh CLI로 리뷰 내용을 PR 코멘트로 달기
-          echo "$REVIEW" > review_content.txt
-          gh pr comment ${{ github.event.pull_request.number }} --body-file review_content.txt

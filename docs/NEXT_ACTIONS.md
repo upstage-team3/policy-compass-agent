@@ -1,99 +1,123 @@
 # 다음 개발 작업
 
-최종 갱신: 2026-07-14
+최종 갱신: 2026-07-15
 
 세부 배경은 [DEVELOPMENT_HANDOFF.md](DEVELOPMENT_HANDOFF.md)를 먼저 읽는다.
+코드와 테스트가 이 문서보다 우선한다.
+교차 검증과 단계별 완료 기준은 [INTEGRATED_ARCHITECTURE_ISSUES.md](INTEGRATED_ARCHITECTURE_ISSUES.md)를 따른다.
 
-## P0. 외부 API live 연결 검증
+## 완료된 구조 기준선
 
-- [x] Upstage Solar Router와 통합 Conversation Node 실제 호출
-- [x] 온통청년 `getPlcy` JSON API와 `apiKeyNm` 인증, 정책 3건 정규화 확인
-- [x] 온통청년 정책명 0건 재검색과 `zipCd` 거주지역 필터 추가
-- [x] 행정표준코드 현존 시·군·구 300개를 온통청년 5자리 코드로 연결
-- [x] 성남 `41130`, 해운대 `26350`, 전주 `52110` live 호출과 지방자치단체 사업의 전국 코드 오표기 교차 검증
-- [x] 기업마당 16/17개 지역 태그 형식과 부산·전북 live 호출, 지역 태그 누락을 전국으로 추정하지 않음
-- [x] 기업마당 전 지역 태그를 소재지·본사 이전·전입 조건으로 교차 검증하고 `지역제한 없음`을 전국으로 우선 판정
-- [x] 예비/기창업·사업자등록 조건 구조화와 관심 분야 유사어 우선순위 적용
-- [x] 정확 지역·전국 결과 부재 시에만 인접 시·도 결과 최대 3건 제공
-- [x] 고용24 훈련 Repository 단독 호출과 상세 URL 회귀 확인
-- [x] 고용24 채용은 허용 3개 endpoint만 호출하고 제한 endpoint를 호출하지 않음
-- [x] 기업마당 Repository 단독 호출과 실제 JSON 필드 확인
-- [x] API 오류 로그에 인증키가 포함된 URL/query string을 남기지 않도록 보완
+- [x] 기업마당 검색, Policy REST/RAG-lite, `PolicyItem`, 가중 점수 파이프라인 제거
+- [x] 창업지원 질문을 LLM `out_of_scope`로 통합하고 외부 Tool·기업마당·K-Startup 링크 제거
+- [x] 턴 검색·초안·검증 상태 초기화와 pending `KEEP/RESUME/CANCEL/REPLACE`
+- [x] 세 활성 소스 결과를 `SearchOutcome(success/no_match/unavailable/partial)`으로 정규화
+- [x] guide/장애 안내 레코드를 후보 배열에서 제거하고 warnings/status로 이동
+- [x] 명시적 불일치·마감은 제외하고 근거 부족은 `unverified` 참고 카드로 보존하는 3상태 gate
+- [x] Work24 훈련 지역명→공식 `srchTraArea1` 코드 적용
+- [x] 무필터 공채기업정보를 기본 채용 결과에서 제외
+- [x] LangGraph를 8개 의미 노드로 통합
+- [x] retryable source 조회 추가 1회, deterministic query rewrite 1회, 답변 revision+재검증 1회 상한
+- [x] `direct_response`까지 포함한 공통 `verify_answer` 경로와 검증 실패 안전 수렴
+- [x] PARTIAL 공개 경고, 시·군·구 gate, 검증 실패 추천 카드·후보 snapshot 차단
+- [x] Pydantic profile allowlist와 필드별 `SET/CLEAR/UNCHANGED`
+- [x] `SupabaseChatMemoryRepository` 단일 경계, recent 8/history·pending·allowlist 후보 snapshot·`last_search_plan`
+- [x] Supabase 미설정·장애 시 최대 2,048세션 bounded local LRU mirror
+- [x] 같은 프로세스·세션 load→graph→save 직렬화, UUIDv4 검증, graph 60초 bounded deadline
+- [x] 인프로세스 세션 20회/분·IP 120회/분 sliding-window rate limit
+- [x] `/api/live`와 설정 기반 `/api/ready` 분리
+- [x] CD checkout/tag/release metadata를 CI exact SHA로 고정하고 GHCR digest로 배포
+- [x] 조건 질문·일반 대화·검색 답변·상태 안내·후속 질문을 Solar 우선 경로로 전환하고 결정론적 fallback 유지
+- [x] `astream` 기반 LangGraph 노드 진행 상태 SSE와 검증 전 초안 비노출
+- [x] React 첫 안내·사이드바·입력창을 온통청년 5개 분야와 고용24 훈련·채용 MVP 범위로 축소
 
-검증 결과에는 HTTP 상태, 정규화 필드, 원문 링크, 제한 사유만 남기고 키 값은 기록하지 않는다.
+현재 그래프:
 
-## P1. Agent 전체 경로 QA
+```text
+prepare_request
+├─ RESPOND / missing slots → direct_response → verify_answer
+│                                             ├─ 실패 → direct_response (validation_fatal)
+│                                             └─ 통과 → finalize → END
+└─ SEARCH → retrieve → assess_evidence
+                ├─ retryable UNAVAILABLE → retrieve (총 2회 이내)
+                ├─ rewrite 가능한 NO_MATCH → rewrite_query → retrieve (1회)
+                ├─ 근거 없음 → direct_response → verify_answer
+                └─ 근거 있음 → build_answer → verify_answer
+                                           ├─ 수정 가능 → build_answer (1회)
+                                           ├─ 실패 → direct_response → verify_answer
+                                           └─ 통과 → finalize → END
+```
 
-- [x] 일반 고민이 `RESPOND/general`로 분류되고 Tool을 호출하지 않는지 확인
-- [x] 청년정책 질문이 `youth_policy`만 호출하는지 확인
-- [ ] 훈련 질문이 `training`과 적절한 `search_query`를 만드는지 확인
-- [ ] 채용 질문이 `recruitment`만 호출하는지 확인
-- [ ] 창업 질문이 `business`만 호출하는지 확인
-- [x] 검색 없는 설명과 공식 데이터가 필요한 설명을 `RESPOND/SEARCH`로 구분
-- [ ] API 후보 밖 사실을 LLM이 생성하지 않는지 확인
+## P0. 구조 개편 회귀 고정
 
-## P2. 대화 품질
+- [x] 전체 Python 테스트, Ruff, 프런트 테스트와 production build를 같은 working tree에서 실행해 로컬 기준선 기록
+- [x] 검색 후 인사/설명, pending KEEP/RESUME/CANCEL/REPLACE, turn retry counter 초기화 회귀 확인
+- [x] 명시적 검색 요청의 valid-but-wrong LLM 결정과 pending slot 답변 오판을 semantic guard로 복구
+- [x] `SearchOutcome`의 네 상태와 guide 제거를 세 source fixture로 고정
+- [x] retryable 장애가 총 2회에서 멈추고, rewrite/revision이 각각 1회를 넘지 않는지 확인
+- [x] query rewrite가 지역·나이·상태·구체 주제 같은 hard condition을 완화하지 않는지 확인
+- [x] API 추천 카드와 세션 후보 snapshot이 gate·답변 검증을 통과한 `success`/`partial` 후보만 포함하는지 확인
 
-- [x] Router 결과에 따라 SSE `status` 메시지를 다르게 표시하고 React 타이핑 영역에 연결
-- [x] `interest_fields`를 무조건 합치지 않고 현재 발화의 새 값으로 교체
-- [x] 최근 대화와 미완료 검색 계획을 Router/Profile/Conversation에 전달
-- [x] 조건 답변 뒤 원래 요청과 검색어로 Tool 검색 재개
-- [x] 정책·훈련·채용·창업 유형별 필수 조건 확인
-- [x] 고정 검색 실패 문구를 출처·검색어 기반 LLM 응답으로 교체
-- [x] 새 관심 분야와 멀티턴 주거정책 요청 회귀 테스트 추가
-- [x] 포괄 청년정책 문의에서 공식 5개 분야를 묻고 일자리 추정값을 폐기
-- [x] 일자리 외 정책 분야에서 취업·창업 상태를 묻지 않도록 분기
-- [x] 채팅 응답에서 Markdown·내부 필드명·형식적 머리말 제거
-- [x] 실제 누락 신청 정보만 안내하고 자격 확인 문구 중복 제거
-- [x] 종료된 온통청년 정책 제외 및 구체 검색어의 무관한 분야 완화 차단
-- [x] 월세·전세·금융 하위 유형 무결과 시 상위 분야·인접 지역 대체 없이 무결과 안내
-- [x] `경기도 말고 서울로` 지역 정정과 도 단위 조건의 시 전용 정책 오추천 차단
-- [x] 종료된 신청기간 필터와 `0~0세` 연령 제한 없음 정규화
-- [x] 전체 평가 기준 기반 점수와 근거 확인률 분리, 지역·연령·사업자 하드 불일치 제외
-- [x] 인접 지역 결과를 점수 0점 참고 결과로 분리하고 거리·거주 요건 표시
-- [x] 동명이인 시·군·구의 시·도 임의 추정 차단과 확인 질문 후 원래 검색 재개
-- [x] LLM이 현재 발화에 없는 시·도를 보완하지 못하도록 결정론적 지역 검증 추가
-- [x] 설명형·추천형·일반 대화 경계 fixture 추가
-- [x] 새로고침 뒤 채팅 목록·메시지·정책 카드·활성 채팅 복원
-- [x] UUID 세션 유지로 새로고침 뒤 멀티턴 주거정책 검색 재개
-- [x] `청년 주거 지원 정책에 대해 알려줘`를 추천 검색으로 분류하고 지역·나이 기본값 재사용
-- [x] 온통청년 브라우저형 헤더 제거, 5xx 재시도, 장애/무결과 안내 분리
-- [x] Router 평가 질문과 기대 결과 표 작성
+## P1. 세션 메모리와 동시성 경계
 
-## P3. 대화 메모리 운영
+그래프는 전역 `MemorySaver`를 사용하지 않는다. 현재 인프로세스 기준선은
+`SupabaseChatMemoryRepository`가 프로필·최근 8개 이력·pending·allowlist된
+`last_presented_candidates`를 단일 계약으로 load/save하고, Supabase 미설정이나
+실패 시 최대 2,048세션 local LRU mirror를 사용하는 것이다.
 
-- [x] Supabase `chat_logs`, `chat_sessions` 스키마와 RLS 적용
-- [x] 최근 메시지 8개, 프로필, `pending_request` 저장·복원
-- [x] 주민번호·외국인등록번호·연락처·이메일·계좌·카드 형태의 브라우저 전송 전 및 서버 입력 단계 차단
-- [x] 민감정보 차단 요청의 LangGraph·LLM·외부 API·Langfuse 호출 방지와 구조화 메모리 재귀 마스킹
-- [x] `SUPABASE_URL`, 서버용 secret/service_role `SUPABASE_KEY`를 CD에 전달
-- [x] 실제 Supabase 저장·복원 smoke test
-- [x] 브라우저 표시 기록의 민감정보 마스킹과 최근 20개 채팅·채팅별 50개 메시지 제한
-- [x] 로컬 채팅 개별 삭제와 전체 기록 삭제
-- [ ] 로그인 기반 session_id 소유권 검증
-- [ ] Supabase 서버 로그 보존 기간과 인증 사용자 삭제 API
-- [ ] 같은 세션의 동시 요청 충돌 제어
-- [ ] Supabase 지연·실패율 운영 지표
+- [x] 요청마다 새 TurnState를 만들고 세션 상태와 검색/검증 상태가 섞이지 않게 유지
+- [x] profile/history/pending/allowlist 후보 snapshot을 단일 저장소 경계로 확정
+- [x] 검증 성공 후보 최대 3건만 `last_presented_candidates`로 저장
+- [x] 같은 프로세스·`session_id`의 load→graph→save를 `SessionLockPool`으로 직렬화
+- [x] Supabase 미설정·장애 시 bounded local LRU mirror 동작을 contract test로 고정
+- [ ] 멀티워커 owner binding과 sticky routing 또는 동등한 소유권 경계 도입
+- [ ] DB optimistic version으로 교차 프로세스 lost update 차단
+- [ ] 서버 세션·로그 삭제 API와 TTL·보존 정책 확정
 
-## P4. 배포 회귀
+## P2. Grounding과 의미 평가
 
-- [x] `git diff`에서 코드와 문서 변경 범위 확인
-- [x] Ruff lint/format 통과
-- [x] pytest `164 passed` 유지
-- [x] 프런트엔드 프로덕션 빌드 통과
-- [x] 프런트엔드 저장·복원·전송 전 개인정보 차단 회귀 테스트 `8 passed`
-- [x] 최신 main `a89d1e3` CI 성공
-- [x] 후속 CD 성공 및 Google Cloud 내부 헬스체크 통과
-- [ ] 외부 `/`, `/api/health`, `/docs` 확인
-- [ ] 배포본에서 API별 대표 질문 확인
+현재 검증은 후보명·허용 URL 중심이므로 claim 단위 검증은 남은 핵심 과제다.
 
-## P5. Langfuse 관측성
+- [ ] 후보 ID·원본 필드·claim·citation을 연결하는 구조화 AnswerPlan 도입 검토
+- [ ] 후보에 없는 금액·기간·신청방법과 후보 A 사실/후보 B URL 결합 차단
+- [x] 연령·지역·경력처럼 구조화 근거가 부족한 요건은 `unknown/unverified` 참고 카드로 표시
+- [ ] source별 관련성·자격·citation fixture와 hard mismatch release blocker 추가
+- [ ] `NO_MATCH`와 `UNAVAILABLE` 사용자 안내 정확도 평가
+- [ ] Langfuse metadata에 release SHA, source status, requested/applied filters, retry/rewrite/revision, gate 전후 건수 기록
+- [ ] 과거 93.3% 평가는 역사적 smoke baseline으로만 취급하고 현재 코드 semantic experiment를 새로 생성
 
-- [x] LangGraph callback과 세션별 Trace context 연결
-- [x] 키 미설정 시 no-op, 앱 종료 시 pending trace flush
-- [x] 합성 질문으로 Router·Tool·Response Trace 생성 및 flush 성공
-- [ ] Langfuse 대시보드에서 Trace 상세 화면 수동 확인
-- [ ] 운영 배포 환경에 Langfuse secret 주입 방식 결정
+## P3. 보안·개인정보
+
+- [x] API `session_id`를 UUIDv4로 제한
+- [x] 인프로세스 세션 20회/분·IP 120회/분 제한과 `Retry-After`
+- [ ] 로그인 또는 서버 서명 익명 세션으로 owner와 `session_id` 결합
+- [ ] 다른 owner의 세션 접근을 403/404로 차단
+- [ ] 멀티워커 공유 owner/IP/session rate limit과 전역 동시 실행 상한
+- [ ] Supabase 서버 로그 보존 기간, 삭제 API, 사용자 고지 확정
+- [ ] Langfuse 전송 전 allowlist redaction과 로그 PII scan
+
+## P4. 운영·배포 회귀
+
+- [x] graph 60초·LLM 8초·source 10초·repository HTTP 9초의 bounded worst-case 예산과 설정 검증
+- [ ] 공통 turn deadline의 남은 예산을 각 노드에 전달하고 Router+Profile 통합 후 상한 재축소
+- [x] 세션·IP 인프로세스 rate limit과 429 응답 회귀 고정
+- [ ] 로컬/CI 키 누락에서 `/api/ready`가 `200 degraded`인지 확인
+- [ ] production 필수 설정 누락에서 `/api/ready`가 `503 not_ready`인지 확인
+- [ ] readiness 응답에 API 키·Supabase URL/키 값이 노출되지 않는지 확인
+- [ ] 성공한 CI의 `workflow_run.head_sha`, checkout SHA, `APP_RELEASE_SHA`가 같은지 확인
+- [ ] GCE의 `.current_image`가 mutable tag가 아닌 `image@sha256:...`인지 확인
+- [ ] 배포본 `/`, `/docs`, `/api/live`, `/api/ready`와 세 활성 Tool 대표 질문 확인
+- [ ] rollback도 `.previous_image`의 digest를 사용하는지 확인
+- [ ] readiness는 현재 구성 여부 검사임을 유지하고, 실제 upstream/circuit probe는 별도 후속 설계
+
+## P5. 제품 QA
+
+- [ ] 훈련 질문이 `training`과 적절한 `search_query`를 만들고 지역 code/gate를 적용하는지 live 확인
+- [ ] 채용 질문이 `recruitment`만 호출하며 무필터 company 결과를 섞지 않는지 확인
+- [ ] 온통청년 대표 5개 분야에서 연령·지역·관련성 gate를 확인
+- [ ] 창업 질문이 LLM `out_of_scope`를 사용하되 Tool과 외부 창업 사이트 링크를 반환하지 않는지 확인
+- [ ] 일반 대화가 고민과 문맥에 맞는 실용적 Solar 응답을 반환하는지 의미 평가
+- [ ] 실제 LLM token streaming과 요청 취소는 후속 기능으로 유지
 
 ## 검증 명령
 
@@ -106,16 +130,7 @@ uv run pytest tests -q
 cd frontend && pnpm test && pnpm run build
 ```
 
-## 현재 최우선 실행 순서
-
-1. 로컬 Supabase 서버 키·RLS와 같은 UUID의 서버 재시작 후 문맥 복원을 재확인한다.
-2. 배포 외부 URL에서 `/`, `/api/health`, `/docs`를 수동 확인한다.
-3. 훈련·채용·창업 질문의 Agent 전체 경로와 grounded 응답을 검증한다.
-4. Router 평가 질문과 기대 결과 표를 확장한다.
-5. 로컬·배포 UI에서 질문 유형별 SSE `status` 표시를 캡처한다.
-6. 발표용 핵심 시나리오와 장애 시 fallback 시나리오를 확정한다.
-
-## 현재 테스트 질문
+## 대표 회귀 질문
 
 | 질문 | 기대 action | 기대 mode | 기대 request_kind |
 | --- | --- | --- | --- |
@@ -125,26 +140,15 @@ cd frontend && pnpm test && pnpm run build
 | 서울에서 클라우드 엔지니어 국비과정 찾아줘 | `SEARCH` | `recommend` | `training` |
 | 서울 사는 만 28세 미취업자인데 청년정책 찾아줘 | `SEARCH` | `recommend` | `youth_policy` |
 | 서울 데이터 분석 신입 채용정보 찾아줘 | `SEARCH` | `recommend` | `recruitment` |
-| 카페 창업 지원사업 추천해줘 | `SEARCH` | `recommend` | `business` |
-| 성남시에 사는 만 25세 청년이야. 주거 관련 정책 찾아줘 | `SEARCH` | `recommend` | `youth_policy` |
-| 부산 해운대구에 사는 만 25세 청년이야. 주거 정책 찾아줘 | `SEARCH` | `recommend` | `youth_policy` |
-| 고성군에 사는 만 25세 청년이야. 주거 정책 찾아줘 | `SEARCH 후 조건 확인` | `recommend` | `youth_policy` |
-| 청년 주거 지원 정책에 대해 알려줘 | `SEARCH` | `recommend` | `youth_policy` |
+| 카페 창업 지원사업 추천해줘 | `RESPOND` | `out_of_scope` | `general` |
 
 멀티턴 회귀:
 
 ```text
 사용자: 거주지원을 받고 싶은데 관련 정책 있어?
 Agent: 거주 지역, 만 나이 확인
+사용자: 안녕하세요
+Agent: 일반 범위 안내, pending은 KEEP
 사용자: 서울에 사는 만 25세야
-Agent: 원래 요청한 주거 정책 검색 재개
+Agent: required slot 충족으로 원래 주거 검색 RESUME
 ```
-
-## 후순위
-
-- 실제 LLM token streaming
-- LangGraph interrupt가 필요해질 때 영속 checkpointer 검토
-- API 수집과 DB 조회 계층 분리
-- Supabase pgvector 기반 검색
-- 정책 공고 Document Parse / Information Extract
-- 운영 관측성과 평가 데이터셋

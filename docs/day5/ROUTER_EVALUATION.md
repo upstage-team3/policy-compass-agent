@@ -1,5 +1,8 @@
 # Day5 Router·Agent 회귀 평가표
 
+> **역사 문서:** 구조 개편 전 평가표다. 현재 8-node 그래프와 회귀 시나리오는
+> `../DEVELOPMENT_HANDOFF.md` 및 `../../scripts/run_langfuse_eval.py`를 기준으로 한다.
+
 이 표는 로컬과 배포본에서 같은 질문을 반복해 Router, Tool 단일 선택, 상태 문구, grounded 응답을 함께 확인하기 위한 체크리스트다.
 
 | 번호 | 질문 | 기대 action / mode | 기대 request_kind | 기대 상태·검증 포인트 |
@@ -10,7 +13,7 @@
 | 4 | 청년도약계좌의 현재 조건을 설명해줘 | `SEARCH / explain` | `youth_policy` | 온통청년 후보 안에서만 설명 |
 | 5 | 서울에서 클라우드 엔지니어 국비과정 찾아줘 | `SEARCH / recommend` | `training` | 고용24 훈련과정 상태, Tool 하나 |
 | 6 | 서울 데이터 분석 신입 채용정보 찾아줘 | `SEARCH / recommend` | `recruitment` | 채용 보조정보 상태, 개인키 허용 범위 안내 |
-| 7 | 카페 창업 지원사업 추천해줘 | `SEARCH / recommend` | `business` | 필요한 지역·창업 상태 질문 후 기업마당만 호출 |
+| 7 | 카페 창업 지원사업 추천해줘 | `RESPOND / out_of_scope` | `general` | Tool 미호출, MVP 지원 범위 안내, 외부 링크 없음 |
 | 8 | 서울 사는 만 28세 미취업자인데 받을 수 있는 청년정책 찾아줘 | `SEARCH / recommend` | `youth_policy` | 정책 분야가 모호하면 분야 확인, 일자리 임의 추정 금지 |
 | 9 | 거주지원을 받고 싶은데 관련 정책 있어? | `SEARCH / recommend` | `youth_policy` | 지역·나이 확인, 취업 상태는 묻지 않음 |
 | 10 | 서울에 사는 만 25세야 | pending 재개 | `youth_policy` | 원래 주거 검색을 재개 |

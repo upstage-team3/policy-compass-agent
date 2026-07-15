@@ -1,288 +1,218 @@
 # 개발 로드맵
 
-> 이 문서는 중장기 설계와 과거 계획을 보존한다. 현재 구현 상태와 바로 이어서 할 작업은 [DEVELOPMENT_HANDOFF.md](DEVELOPMENT_HANDOFF.md)와 [NEXT_ACTIONS.md](NEXT_ACTIONS.md)를 우선한다.
+최종 갱신: 2026-07-15
 
-현재 스냅샷(2026-07-13): Day4 구현과 최신 main CI/CD·GCE 자동 배포까지 완료했다. Day5 사전 안정화에서 유형별 SSE, React 새로고침 대화 복원, 로컬 기록 삭제를 보강했다. 남은 핵심은 외부 URL 수동 회귀, 훈련·채용·창업 Agent 전체 경로 QA, 발표 시나리오 확정이다.
+> 이 문서는 중장기 방향을 정리한다. 당장 이어서 할 일은
+> [DEVELOPMENT_HANDOFF.md](DEVELOPMENT_HANDOFF.md)와
+> [NEXT_ACTIONS.md](NEXT_ACTIONS.md)를 우선한다.
 
-## 목표
+## 제품 목표
 
-2026-07-16 최종 발표까지 정책나침반을 취업 대상 청년을 위한 배포 가능한 AI Agent 데모로 완성한다.
+정책나침반은 취업 준비 청년에게 온통청년 정책과 고용24 훈련·채용 보조정보를
+공식 근거와 함께 안내하는 Agent다. 기능 수보다 다음 불변식을 우선한다.
 
-핵심 목표는 기능을 많이 늘리는 것이 아니라, 다음 흐름을 안정적으로 시연하는 것이다.
-
-```text
-사용자 조건 분석 -> 부족 조건 확인 -> 지원사업 검색 -> 신청 가능성 점수화 -> 근거 기반 추천 답변 -> 공식 공고 확인 안내
-```
-
-2026-07-10 기준 MVP 핵심 대상은 대학생, 졸업예정자, 사회초년생, 미취업 청년이다.
-온통청년 Open API와 고용24 국민내일배움카드 훈련과정 API를 중심으로 개발하고, 고용24 채용정보 API는 개인키로 허용되는 채용행사/공채속보/공채기업정보만 보조 기능으로 둔다. 채용정보목록/상세는 개인키로 사용할 수 없으므로 탐색 가이드로 폴백한다. 이미 확보한 기업마당 API는 창업/사업자 질문의 보조 데이터로 유지한다.
-
-## 현재 기준 아키텍처
+- 정상 경로는 짧다.
+- 실패 상태는 정상 무결과와 구분한다.
+- 명시적 자격 불일치는 생성 전에 제외한다.
+- 모든 retry/rewrite/revision은 상한이 있다.
+- 근거를 검증하지 못하면 정직하게 중단한다.
 
 ```text
-FastAPI 단일 서버 (:8000)
-├─ 정적 채팅 UI (/)
-├─ API 문서 (/docs)
-├─ Chat API (/api/chat, /api/chat/stream)
-├─ Policy API (/api/policies)
-└─ LangGraph Agent
-   ├─ Router
-   ├─ Profile Extractor
-   ├─ Missing Slot
-   ├─ Policy Search
-   ├─ Eligibility Scorer
-   ├─ Response
-   └─ Guardrail
+요청 계획
+→ 부족 조건 확인 또는 Tool 하나 선택
+→ SearchOutcome
+→ 결정론적 무점수 evidence gate
+→ 근거 기반 답변
+→ 답변 재검증
+→ 비변형 finalize
 ```
 
-## Day2: 2026-07-09
+## 현재 범위
 
-목표: 실연동 중심 Agent MVP 구현 및 팀원 구조 통합
+| 우선순위 | 소스/기능 | 상태 |
+| --- | --- | --- |
+| 1 | 온통청년 청년정책 | 활성 |
+| 2 | 고용24 국민내일배움카드 훈련과정 | 활성 |
+| 3 | 고용24 채용행사·공채속보 보조정보 | 활성, 직접 채용공고 전체가 아님 |
+| 4 | 창업지원 | MVP 범위 밖: LLM 범위 안내, Tool·외부 링크 미사용 |
 
-완료한 작업:
+기업마당 API 검색, Policy REST/RAG-lite, `PolicyItem`, 가중 적합도 점수는 제품
+범위에서 제거됐다. 다시 도입하려면 별도 제품 결정과 데이터 적합성 검증이 필요하다.
 
-- 스타터 코드를 정책 추천 도메인으로 전환
-- 팀원이 공유한 `policy-compass-agent` 구조 검토 및 통합
-- FastAPI 단일 서버 구조로 8000 포트 통일
-- LangGraph Agent 기본 흐름 구현
-- 사용자 조건 추출 Node 구현
-- 부족 조건 질문 흐름 구현
-- 고용24 훈련과정 실데이터 연동
-- 추천 점수화 로직 구현
-- 상담형 응답 생성 구현
-- 기업마당 API 인증키 기반 호출 구조 추가
-- API 실패 시 빈 결과 또는 명시적 안내 fallback 구현
-- 정적 채팅 UI 제공
-- 정책 목록/상세/검색 API 추가
-- SSE 스트리밍 API 추가
-- 테스트 23개 통과
-- README 및 개발 문서 1차 갱신
-
-완료 기준:
-
-- `http://localhost:8000/` UI 접속 가능
-- `http://localhost:8000/health` 응답 확인
-- 미취업 청년 시나리오 정상 응답
-- 조건 부족 시 추가 질문
-- `uv run python -m pytest` 통과
-
-## Day3: 2026-07-10
-
-목표: 취업 MVP 범위 확정, 외부 API 신청, LLM 응답 품질과 가드레일 고도화
-
-작업:
-
-- Upstage Solar 응답 프롬프트에 정책 추천 가이드라인 강화
-- LLM이 후보 데이터 밖의 정책명, 금액, 날짜, 링크를 생성하지 않도록 제한
-- Response Node 출력 형식 고정
-- Guardrail Node에 금지 표현과 출처 없는 단정 표현 검출 보강
-- LLM ON/OFF 상태별 데모 결과 비교
-- 온통청년 Open API 신청 및 문서 기준 필드 매핑 설계
-- 고용24 국민내일배움카드 훈련과정 API 응답 구조 분석 및 훈련과정 스키마 설계
-- 고용24 채용정보 API 개인키 권한 범위 확인 및 채용정보목록/상세 fallback 설계
-- 기업마당 API는 창업/사업자 보조 데이터로 역할 재정의
-- SSE 이벤트 문구와 UI 표시 개선
-
-완료 기준:
-
-- LLM 사용 시에도 정책 후보 데이터 밖의 사실을 만들지 않음
-- 답변에 추천 이유, 확인 필요 조건, 신청 방법, 원문 링크 포함
-- 최종 자격 판정처럼 들리는 표현 없음
-- 핵심 시나리오 2개 이상 반복 성공
-- 온통청년/고용24 API 신청 상태가 문서에 반영됨
-
-## Day4: 2026-07-13
-
-목표: 배포 가능한 수준으로 운영화
-
-작업:
-
-- Docker Compose 실행 검증
-- GCP VM 환경 세팅
-- 8000 포트 방화벽 허용
-- 필요 시 Nginx 80 -> 8000 프록시 구성
-- GitHub Actions CI 확인
-- `.env`와 GitHub Secret 분리
-- `/health`, `/api/health`, `/api/chat` 외부 접속 확인
-
-완료 기준:
-
-- 외부 URL 접속 가능
-- Docker 빌드 성공
-- CI 통과
-- `.env` 미업로드 확인
-
-## Day5: 2026-07-14
-
-목표: 취업 MVP 기능 보강 및 안정화
-
-작업:
-
-- 대학생, 졸업예정자, 사회초년생, 미취업 청년 시나리오 안정화
-- 취업 지원정책과 훈련과정을 중심으로 보여주고, 채용정보는 가능할 때만 보조로 붙이는 답변 형식 정리
-- 마감 공고 처리 개선
-- 지역 미입력 시 되묻기 개선
-- 온통청년/고용24 응답 필드가 비어 있을 때 예외 처리
-- 기업마당 응답은 창업/사업자 질문에서만 보조적으로 사용
-- 가드레일 테스트 추가
-- 정책 검색 결과가 없을 때 대체 질문 제안
-- React 새로고침 뒤 채팅 목록·메시지·정책 카드와 같은 UUID 세션 복원
-- 브라우저 표시 기록의 민감정보 마스킹·보존 한도·개별/전체 삭제
-
-완료 기준:
-
-- 취업 MVP 핵심 시나리오 3개 반복 재현
-- 치명적 오류 0건
-- 추천 결과에 출처 링크 포함
-- LLM 환각성 응답 발견 시 프롬프트/가드레일로 수정
-
-## Day6: 2026-07-15
-
-목표: 통합, 문서화, 발표 준비
-
-작업:
-
-- README 최종 보강
-- 설치/실행/환경변수/문제 해결 문서화
-- 데모 시나리오 2개 확정
-- 발표자료 초안 작성
-- 백업 데모 영상 녹화
-- GitHub Repository 정리
-
-완료 기준:
-
-- README만 보고 실행 가능
-- 데모 2회 반복 성공
-- 발표자료 초안 완성
-- 백업 영상 준비
-
-## Day7: 2026-07-16
-
-목표: 최종 발표 및 산출물 제출
-
-작업:
-
-- 발표자료 최종 정리
-- 라이브 데모 점검
-- GitHub Repository 최종 정리
-- 데모 영상 제출
-- 최종 회고 작성
-
-완료 기준:
-
-- 발표자료 제출
-- 데모 영상 제출
-- GitHub 프로젝트 제출
-- 발표 및 Q&A 완료
-
-## DB 기반 고도화 계획
-
-현재 프로젝트는 기업마당 Open API와 고용24 훈련과정 API를 통해 데이터를 가져오고, LangGraph Agent가 조건 추출 -> 누락 조건 확인 -> 정책/훈련 검색 -> 자격 점수화 -> 답변 생성을 수행하는 MVP 구조다. 배포/연동 테스트 기준으로 데모용 대체 정책 데이터 fallback은 제거했으며, 다음 구현 단계에서는 온통청년 API와 고용24 훈련과정 API를 핵심 데이터 소스로 강화하고 고용24 채용정보 API는 보조/fallback 대상으로 둔다.
-
-평가 기준과 서비스 완성도를 고려하면 다음 단계에서는 외부 API를 실시간으로 직접 조회하는 방식보다, 외부 정책 데이터를 내부 표준 스키마로 정규화해 DB에 저장하고 Agent가 DB를 조회하는 구조가 더 적합하다.
-
-권장 목표 구조:
+## 현재 8-node 아키텍처
 
 ```text
-온통청년 API / 고용24 훈련과정 API / 고용24 채용행사·공채속보·공채기업정보 API(보조) / 기업마당 API / 샘플 API 응답 fixture / 정책 문서
--> Ingestion Service
--> 정규화 및 검증
--> DB 저장
--> PolicyRepository
--> PolicySearchTool
--> LangGraph Agent
--> 사용자 답변
+prepare_request
+├─ direct_response → verify_answer
+│                    ├─ validation_fatal → direct_response → verify_answer
+│                    └─ finalize → END
+└─ retrieve → assess_evidence
+       ├─ retryable failure → retrieve (총 2회)
+       ├─ rewriteable no-match → rewrite_query → retrieve (1회)
+       ├─ no evidence → direct_response → verify_answer
+       └─ build_answer → verify_answer
+                           ├─ revision → build_answer (1회)
+                           ├─ fatal → direct_response → verify_answer
+                           └─ finalize → END
 ```
 
-### DB 도입 범위
+그래프는 전역 `MemorySaver`를 사용하지 않는다. TurnState는 요청마다 새로 만들고,
+`SupabaseChatMemoryRepository`가 프로필·최근 8개 이력·pending·allowlist된 직전
+후보의 단일 세션 경계다. Supabase 미설정·실패 시에는 최대 2,048세션 local LRU
+mirror를 사용하고 같은 프로세스·세션의 load→graph→save는 lock으로 직렬화한다.
 
-MVP 고도화 단계에서는 PostgreSQL 또는 Supabase를 기준으로 다음 데이터를 저장한다.
+## 완료 이력
 
-- `policies`: 정규화된 정책 공고 데이터
-- `policy_sources`: 온통청년, 고용24 훈련과정, 고용24 채용정보, 기업마당 API 원본 응답 및 출처 정보
-- `recruitment_infos`: 고용24 개인키로 허용되는 채용행사/공채속보/공채기업정보 정규화 데이터
-- `chat_sessions`: 사용자 대화 세션
-- `chat_messages`: 세션별 대화 이력
-- `policy_documents`: 추후 정책 공고 PDF/첨부 문서 저장 및 파싱 결과 연결
-- `policy_chunks` / `policy_embeddings`: 추후 pgvector 기반 RAG 확장용
+### 기반 MVP
 
-초기 구현에서는 `policies`, `policy_sources`, `chat_sessions`, `chat_messages`를 우선 적용하고, 문서 파싱과 임베딩 검색은 확장 가능하도록 인터페이스와 스키마만 설계한다.
+- FastAPI, React UI, Docker Compose
+- Upstage Solar Router/Profile/응답 경로와 규칙 fallback 격리
+- 온통청년, Work24 훈련, Work24 허용 채용 보조 endpoint 연동
+- SSE `status/token/done/error`, 추천 카드와 feedback/Langfuse score 계약
+- 브라우저 대화 복원·UUID 세션·PII 마스킹
+- Supabase 대화/프로필/pending 저장 기반
 
-### 계층 분리 방향
+### 2026-07-15 구조 안정화
 
-현재 구조는 FastAPI 라우트, LangGraph 노드, Tool, Repository가 분리되어 있지만, `PolicyRepository`가 외부 API 호출, 정규화, 데이터 조회 역할을 함께 가지고 있다.
+- 기업마당 검색과 가중 점수 파이프라인 제거
+- 창업·사업자 지원을 Tool 미호출 LLM `out_of_scope`로 통합
+- fresh-turn reset과 pending `KEEP/RESUME/CANCEL/REPLACE`
+- `SearchOutcome(success/no_match/unavailable/partial)` 도입
+- guide 후보 제거와 장애/무결과 분리
+- 온통청년 연령·지역·관련성 gate
+- Work24 훈련 공식 지역 코드와 후처리 지역 gate
+- Work24 채용 무필터 company 기본 제외와 허용 유형 gate
+- 11개 bookkeeping 중심 노드를 8개 의미 노드로 통합
+- source retry/query rewrite/answer revision의 bounded feedback edge
+- 검증 후 내용을 바꾸지 않는 `finalize`
+- `/api/live`, 설정 기반 `/api/ready`
+- CI exact `workflow_run.head_sha`, GHCR immutable digest 배포 계약
+- Pydantic profile allowlist와 필드별 `SET/CLEAR/UNCHANGED`
+- 시·군·구 검증 및 구조화 지역 검증 불가 후보 차단
+- `direct_response` 공통 검증과 PARTIAL 공개 경고
+- 검증 실패 추천 카드·allowlist 후보 snapshot 차단
+- 명시적 Supabase 세션 경계와 bounded local LRU mirror
+- UUIDv4 전용 세션 ID, 같은 프로세스 세션 lock,
+  60초 그래프·8초 LLM·10초 소스·9초 Repository HTTP 예산
+- 세션 20회/분·IP 120회/분 인프로세스 rate limit
+- React UI를 온통청년 5개 분야와 고용24 훈련·채용 MVP 문구로 정렬
 
-다음 단계에서는 역할을 더 명확히 나눈다.
+## Phase A — 회귀 기준선 고정 (로컬 완료)
 
-- Controller: `app/api/routes`, HTTP 요청/응답만 담당
-- Service: `app/services`, 정책 수집/검색/추천 흐름 조율
-- Repository: `app/repositories`, DB 읽기/쓰기만 담당
-- Tool: `app/tools`, Agent가 호출하는 기능 인터페이스
-- Schema: `app/schemas`, API 및 내부 데이터 계약 정의
+목표: 구조 변경이 실제 사용자 계약을 깨지 않았음을 같은 working tree에서 확인한다.
 
-예상 추가 모듈:
+- 전체 Ruff/pytest/frontend/build 실행
+- 검색 후 일반 대화 state leak 0건
+- pending 네 상태 전이 정확도
+- SearchOutcome 네 상태와 guide 후보 0건
+- source retry 총 2회, rewrite/revision 각 1회 상한
+- gate 통과 후보만 API 카드에 포함
+- startup/business 질문의 검색 Tool·외부 링크 0회, LLM `out_of_scope` 응답
 
-- `app/services/policy_ingestion.py`
-- `app/services/policy_search.py`
-- `app/repositories/policy_db.py`
-- `app/repositories/chat_session.py`
-- `data/sample_bizinfo_api_response.json`
-- `data/scripts/seed_policies.py`
+현재 전체 로컬 Ruff·Python/프런트 회귀와 production build가 통과한다. 활성 외부
+API와 실제 배포본 smoke는 Phase D/F의 별도 release 기준으로 계속 확인한다.
 
-### Tool Schema 및 누락 조건 질문
+## Phase B — 명시적 저장소 세션 메모리 (인프로세스 기준 완료)
 
-Tool Schema는 Agent가 도구를 호출할 때 사용하는 입력 계약이다. 챗봇은 사용자 입력에서 조건을 추출한 뒤, Tool Schema 기준으로 필수 조건이 부족한지 판단하고, 부족하면 바로 검색하지 않고 되묻는다.
+목표: 그래프 checkpoint에 기대지 않고 세션 상태의 소유권과 수명을 명확히 한다.
 
-정책 추천 Tool의 주요 입력 필드:
+- [x] profile, recent 8-message history, pending을 load/save하는 단일 저장소 계약
+- [x] 검증을 통과한 직전 제시 후보 최대 3건을 allowlist snapshot으로 저장
+- [x] TurnState에는 검색 결과·검증·retry counter만 두고 요청 뒤 폐기
+- [x] 같은 프로세스·session 동시 요청을 load→graph→save 범위에서 직렬화
+- [x] Supabase 미설정·장애 시 bounded local LRU mirror contract test
+- [ ] multi-worker owner binding과 routing
+- [ ] DB optimistic version을 통한 교차 프로세스 충돌 방지
+- [ ] 서버 세션·로그 삭제 API와 TTL·보존 정책
 
-- `region`
-- `age`
-- `employment_status`
-- `is_entrepreneur`
-- `has_registered_business`
-- `business_stage`
-- `interest_categories`
-- `preferred_support_type`
-- `income_level`
-- `limit`
+local LRU mirror는 프로세스 재시작·멀티워커 내구성을 보장하지 않으며 Supabase의
+대체 영구 저장소가 아니다.
 
-최소 추천 조건은 `region`, `age`, `employment_status`, `is_entrepreneur`로 두고, 사업자 등록 여부나 관심 분야는 추천 품질을 높이는 선택 조건으로 처리한다. 단, 창업/소상공인 정책을 추천할 때는 `has_registered_business` 또는 `business_stage`가 부족하면 추가 질문을 우선한다.
+## Phase C — claim grounding
 
-### 실제 API와 저장 데이터 호환성
+목표: 제목·URL 집합 검사를 넘어 사실과 출처를 후보 단위로 연결한다.
 
-실연동 전환 시 깨지지 않도록 실제 API 응답과 내부 표준 데이터를 분리한다.
+- AnswerPlan 또는 동등한 구조화 claim 계약
+- candidate ID·source field·claim·citation binding
+- 후보에 없는 금액·기간·신청방법 차단
+- 후보 A 사실과 후보 B URL 교차 결합 차단
+- 검증 실패 시 1회 revision 후 재검증, 두 번째 실패는 abstention
+- `finalize` 전후 factual content 동일성 테스트
 
-- `sample_bizinfo_api_response.json`: 기업마당 API 응답 형태를 보존한 샘플 fixture
-- 저장 데이터: 내부 표준 정책/훈련 스키마에 맞춘 정규화 결과
+## Phase D — semantic evaluation
 
-실제 API 응답과 샘플 API 응답은 같은 normalizer를 거쳐 DB에 저장되도록 한다.
+목표: 초록 trace가 실행 완료가 아니라 사용자 관점의 정확성을 뜻하게 한다.
 
-### Upstage Document Parse / Information Extract 확장
+- 세 source별 정상 검색·hard mismatch·장애·멀티턴·grounding 데이터셋
+- requested/applied filter 일치율
+- source별 Precision@3
+- hard mismatch 노출 0건
+- supported claim/citation precision
+- `NO_MATCH`/`UNAVAILABLE` 구분 정확도
+- 이전 턴 누출과 retry 상한 release blocker
+- release SHA, source status, retry/rewrite/revision, gate 전후 수를 Langfuse에 기록
 
-정책 공고는 API 필드만으로는 지원 대상, 제외 조건, 제출 서류, 신청 절차가 부족할 수 있다. 추후 Upstage Document Parse와 Information Extract를 활용해 공고 PDF/HTML/첨부 문서에서 구조화 정보를 추출하는 흐름을 추가한다.
+과거 93.3% 평가는 구 그래프의 역사적 smoke baseline이며 현재 release 품질
+근거로 사용하지 않는다.
 
-예상 흐름:
+## Phase E — 보안·개인정보
+
+- [x] UUIDv4 전용 세션 ID 검증
+- [x] 세션·IP 기준 인프로세스 rate limit과 `Retry-After`
+- 로그인 또는 서버 서명 익명 세션 owner binding
+- 다른 owner session 접근 차단
+- 멀티워커 공유 IP·owner·session rate limit과 전역 동시 실행 상한
+- 서버 로그 보존 기간과 삭제/내보내기 API
+- trace allowlist redaction과 PII scan
+
+완료 전에는 공개 실서비스 준비가 끝났다고 판단하지 않는다.
+
+## Phase F — 운영 안정화
+
+- [x] 그래프 턴 전체 60초 deadline과 worst-case 설정 검증
+- [x] LLM 8초·source 10초·Repository HTTP 9초 timeout 세분화
+- 공유 HTTP client/pooling
+- source별 circuit breaker와 짧은 cache
+- 실제 upstream/circuit를 반영하는 readiness 확장 검토
+- 실제 LLM token streaming과 요청 취소
+- Docker smoke, dependency/secret/container scan
+
+현재 `/api/ready`는 구성 여부만 확인한다. 로컬/CI 키 누락은 `200 degraded`,
+production 필수 구성 누락은 `503 not_ready`다.
+
+## 배포 revision 규칙
+
+- CI가 성공한 `workflow_run.head_sha`를 exact checkout한다.
+- 같은 전체 SHA를 image tag와 `APP_RELEASE_SHA`에 사용한다.
+- GCE에는 tag가 아니라 `image@sha256:...` digest를 배포한다.
+- `.current_image`와 `.previous_image`도 digest를 기록한다.
+- 컨테이너와 배포 후 healthcheck는 `/api/ready`를 사용한다.
+
+## DB/문서 고도화 후보
+
+실시간 API의 재현성과 장애 내성을 더 높여야 할 때 다음을 검토한다.
 
 ```text
-정책 공고 문서 수집
--> Upstage Document Parse
--> Information Extract
--> 신청 대상 / 지원 내용 / 신청 기간 / 제외 조건 / 제출 서류 추출
--> DB 저장
--> Agent 답변 근거로 활용
+온통청년 / Work24 / 공식 문서
+→ ingestion
+→ 정규화·검증
+→ source별 DB/cache
+→ SearchOutcome adapter
+→ LangGraph
 ```
 
-MVP에서는 전체 문서 자동 파싱을 Out of Scope로 두되, 아키텍처와 테이블 설계에는 반영한다.
+- 외부 API 원본과 정규화 후보의 provenance 보존
+- 정책 공고 PDF/HTML의 Document Parse/Information Extract
+- 구조화한 지원 대상·제외 조건·제출 서류를 claim 근거로 사용
 
-### Out of Scope
+이 확장은 현재 세 source 계약을 대체하지 않고 adapter 뒤에 추가한다. 제거된
+기업마당·RAG-lite 설계를 기본안으로 되돌리지 않는다.
 
+## Out of Scope
+
+- 최종 자격 판정 또는 합격 가능성 보장
+- 실제 신청 대행
+- 민감 개인정보 원문 저장
+- 청년정책 외 분야 상담
 - 모든 정부지원사업 실시간 동기화
 - 모든 첨부 문서 자동 파싱
-- 최종 자격 판정
-- 민감 개인정보 저장
-- 신청 대행
-- 법률/세무/노무 판단
-
-### 기획 설명 문장
-
-외부 정책 API와 공고 문서를 내부 표준 정책 스키마로 정규화해 DB에 저장하고, Agent는 저장된 정책 카탈로그와 근거 데이터를 기반으로 추천하므로 외부 API 장애에 강하고 추천 결과를 재현할 수 있다.

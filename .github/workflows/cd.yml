@@ -52,6 +52,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}/policy-compass-agent
+  RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
 
 jobs:
   # =========================================================
@@ -74,6 +75,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_SHA }}
 
       # Docker Buildx 설정 (멀티 플랫폼, 캐시 지원)
       - name: Set up Docker Buildx
@@ -99,7 +102,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}
           tags: |
-            type=sha,prefix=
+            type=raw,value=${{ env.RELEASE_SHA }}
             type=raw,value=latest
 
       # 이미지 빌드 & Push
@@ -141,15 +144,14 @@ jobs:
           script: |
             set -e
 
-            echo "🚀 배포 시작: ${{ github.sha }}"
+            echo "🚀 배포 시작: ${{ env.RELEASE_SHA }}"
             echo "================================"
 
             # 환경 변수 설정 (✅ 소문자 정규화 포함)
             REGISTRY="ghcr.io"
             IMAGE_NAME=$(echo "${{ github.repository }}/policy-compass-agent" | tr '[:upper:]' '[:lower:]')
-            # 짧은 SHA 사용 (build의 type=sha와 일치)
-            IMAGE_TAG=$(echo "${{ github.sha }}" | cut -c1-7)
-            FULL_IMAGE="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+            IMAGE_DIGEST="${{ needs.build-and-push.outputs.image_digest }}"
+            FULL_IMAGE="${REGISTRY}/${IMAGE_NAME}@${IMAGE_DIGEST}"
             DEPLOY_DIR="/home/${{ secrets.GCE_USERNAME }}/policy-compass-agent"
 
             # 첫 배포 시 폴더 자동 생성
@@ -160,10 +162,9 @@ jobs:
 
             cd $DEPLOY_DIR
 
-            # docker-compose.yml 없으면 자동 생성
-            if [ ! -f "docker-compose.yml" ]; then
-              echo "📝 docker-compose.yml 생성 중..."
-              cat > docker-compose.yml << 'COMPOSE_EOF'
+            # 배포용 Compose는 워크플로우가 매번 같은 내용으로 관리한다.
+            echo "📝 docker-compose.yml 갱신 중..."
+            cat > docker-compose.yml << 'COMPOSE_EOF'
             services:
               policy-compass-agent:
                 image: ${POLICY_COMPASS_IMAGE:-ghcr.io/owner/repo/policy-compass-agent:latest}
@@ -174,27 +175,22 @@ jobs:
                 env_file:
                   - .env
                 healthcheck:
-                  test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+                  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/ready', timeout=5)"]
                   interval: 30s
                   timeout: 10s
                   retries: 3
                   start_period: 10s
             COMPOSE_EOF
-            fi
 
             # .env 파일 생성 (GitHub Secrets에서 자동 주입)
             echo "📝 .env 파일 생성 중..."
             cat > .env << ENV_EOF
-            ENVIRONMENT=production
-            DEBUG=false
+            APP_ENV=production
+            APP_RELEASE_SHA=${{ env.RELEASE_SHA }}
             UPSTAGE_API_KEY=${{ secrets.UPSTAGE_API_KEY }}
             YOUTHCENTER_POLICY_API_KEY=${{ secrets.YOUTHCENTER_POLICY_API_KEY }}
-            YOUTHCENTER_POLICY_API_URL=${{ secrets.YOUTHCENTER_POLICY_API_URL }}
             EMPLOYMENT24_TRAINING_API_KEY=${{ secrets.EMPLOYMENT24_TRAINING_API_KEY }}
-            EMPLOYMENT24_TRAINING_API_URL=${{ secrets.EMPLOYMENT24_TRAINING_API_URL }}
             EMPLOYMENT24_JOB_API_KEY=${{ secrets.EMPLOYMENT24_JOB_API_KEY }}
-            BIZINFO_API_KEY=${{ secrets.BIZINFO_API_KEY }}
-            BIZINFO_API_URL=${{ secrets.BIZINFO_API_URL }}
             SUPABASE_URL=${{ secrets.SUPABASE_URL }}
             SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}
             LANGFUSE_PUBLIC_KEY=${{ secrets.LANGFUSE_PUBLIC_KEY }}
@@ -215,7 +211,6 @@ jobs:
             if [ -f ".current_image" ]; then
               cp .current_image .previous_image
             fi
-            echo "${FULL_IMAGE}" > .current_image
 
             # Step 1: GHCR 로그인
             echo "🔐 GHCR 로그인 중..."
@@ -239,9 +234,11 @@ jobs:
             MAX_RETRIES=12
             RETRY_INTERVAL=5
             for i in $(seq 1 $MAX_RETRIES); do
-              HTTP_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" http://localhost:8000/api/health 2>/dev/null || echo "000")
+              HTTP_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" http://localhost:8000/api/ready 2>/dev/null || echo "000")
               if [ "$HTTP_STATUS" -eq 200 ]; then
                 echo "✅ 서버 정상 (HTTP $HTTP_STATUS)"
+                # readiness를 통과한 digest만 현재 버전으로 확정한다.
+                echo "${FULL_IMAGE}" > .current_image
                 break
               fi
               echo "  시도 $i/$MAX_RETRIES (HTTP $HTTP_STATUS)..."
@@ -256,7 +253,22 @@ jobs:
                   docker pull ${PREV_IMAGE}
                   export POLICY_COMPASS_IMAGE=${PREV_IMAGE}
                   $DOCKER_COMPOSE up -d --force-recreate
-                  echo "⚠️ 이전 버전으로 롤백됨: ${PREV_IMAGE}"
+                  ROLLBACK_OK=false
+                  for j in $(seq 1 $MAX_RETRIES); do
+                    ROLLBACK_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" http://localhost:8000/api/ready 2>/dev/null || echo "000")
+                    if [ "$ROLLBACK_STATUS" -eq 200 ]; then
+                      echo "${PREV_IMAGE}" > .current_image
+                      ROLLBACK_OK=true
+                      echo "⚠️ 이전 버전으로 롤백 완료: ${PREV_IMAGE}"
+                      break
+                    fi
+                    echo "  롤백 확인 $j/$MAX_RETRIES (HTTP $ROLLBACK_STATUS)..."
+                    sleep $RETRY_INTERVAL
+                  done
+                  if [ "$ROLLBACK_OK" != "true" ]; then
+                    echo "❌ 이전 버전도 readiness 확인에 실패했습니다."
+                    $DOCKER_COMPOSE logs --tail=100
+                  fi
                 fi
                 exit 1
               fi
@@ -312,7 +324,7 @@ jobs:
             echo "⏳ 헬스체크 중..."
             MAX_RETRIES=12
             for i in $(seq 1 $MAX_RETRIES); do
-              HTTP_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" http://localhost:8000/api/health 2>/dev/null || echo "000")
+              HTTP_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" http://localhost:8000/api/ready 2>/dev/null || echo "000")
               if [ "$HTTP_STATUS" -eq 200 ]; then
                 echo "✅ 롤백 성공!"
                 echo "${PREV_IMAGE}" > .current_image
@@ -343,7 +355,7 @@ jobs:
           # 빌드 결과
           if [ "${{ needs.build-and-push.result }}" == "success" ]; then
             echo "### ✅ 빌드 성공" >> $GITHUB_STEP_SUMMARY
-            echo "- 이미지: \`ghcr.io/${{ github.repository }}/policy-compass-agent:$(echo ${{ github.sha }} | cut -c1-7)\`" >> $GITHUB_STEP_SUMMARY
+            echo "- 이미지 digest: \`${{ needs.build-and-push.outputs.image_digest }}\`" >> $GITHUB_STEP_SUMMARY
           elif [ "${{ needs.build-and-push.result }}" == "skipped" ]; then
             echo "### ⏭️ 빌드 스킵 (롤백 모드)" >> $GITHUB_STEP_SUMMARY
           else
@@ -363,7 +375,7 @@ jobs:
           echo "### 📋 상세 정보" >> $GITHUB_STEP_SUMMARY
           echo "| 항목 | 값 |" >> $GITHUB_STEP_SUMMARY
           echo "|------|-----|" >> $GITHUB_STEP_SUMMARY
-          echo "| 커밋 | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 커밋 | \`${{ env.RELEASE_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| 브랜치 | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| 실행자 | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
           echo "| 방식 | GHCR + Compute Engine Pull |" >> $GITHUB_STEP_SUMMARY

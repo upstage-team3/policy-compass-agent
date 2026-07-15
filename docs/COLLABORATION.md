@@ -1,5 +1,9 @@
 # 협업 규칙 및 진행 공유 방식
 
+> **역사 문서:** 초기 협업 합의와 당시 구조를 보존한다. 현재 구현·작업 규칙은
+> 루트의 `AGENTS.md`와 `docs/DEVELOPMENT_HANDOFF.md`를 기준으로 하며, 아래의 기업마당
+> 검색 파이프라인 설명은 현재 시스템에 적용되지 않는다.
+
 > 작업 시작 전 [DEVELOPMENT_HANDOFF.md](DEVELOPMENT_HANDOFF.md)에서 현재 아키텍처와 미커밋 변경을 확인한다.
 
 ## 목적
@@ -92,7 +96,6 @@ test: add chat and policy api coverage
 ```text
 .env
 UPSTAGE_API_KEY 실제 값
-BIZINFO_API_KEY 실제 값
 Supabase 키
 서비스 계정 키
 비밀번호
@@ -102,11 +105,9 @@ Supabase 키
 
 ```env
 UPSTAGE_API_KEY=
-BIZINFO_API_KEY=
-BIZINFO_API_URL=https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do
 SERVICE_NAME=policy-compass
 APP_ENV=local
-CORS_ORIGINS=["*"]
+CORS_ORIGINS=["http://localhost:5173","http://127.0.0.1:5173"]
 ```
 
 ## 포트 및 실행 기준

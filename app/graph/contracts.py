@@ -30,7 +30,6 @@ class RequestKind(StrEnum):
     YOUTH_POLICY = "youth_policy"
     TRAINING = "training"
     RECRUITMENT = "recruitment"
-    BUSINESS = "business"
     GENERAL = "general"
 
 

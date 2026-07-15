@@ -1,9 +1,21 @@
 from __future__ import annotations
 
 from typing import Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def _canonical_session_id(value: str) -> str:
+    """Require a high-entropy UUID bearer identifier for anonymous sessions."""
+
+    try:
+        parsed = UUID(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("session_id must be a UUID") from exc
+    if parsed.version != 4:
+        raise ValueError("session_id must be a random UUIDv4")
+    return str(parsed)
 
 
 class UserProfile(BaseModel):
@@ -13,8 +25,6 @@ class UserProfile(BaseModel):
         None
     )
     region: str | None = None
-    is_entrepreneur: bool | None = None
-    has_registered_business: bool | None = None
     interest_fields: list[str] = Field(default_factory=list)
     policy_topic: str | None = None
 
@@ -36,6 +46,11 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     profile_defaults: UserProfileDefaults | None = None
 
+    @field_validator("session_id")
+    @classmethod
+    def validate_session_id(cls, value: str) -> str:
+        return _canonical_session_id(value)
+
 
 class ChatTurnResponse(BaseModel):
     session_id: str
@@ -50,5 +65,10 @@ class ChatTurnResponse(BaseModel):
 class RecommendationFeedbackRequest(BaseModel):
     session_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
     message_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
-    trace_id: str | None = None
+    trace_id: str | None = Field(default=None, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
     rating: Literal["up", "down"]
+
+    @field_validator("session_id")
+    @classmethod
+    def validate_session_id(cls, value: str) -> str:
+        return _canonical_session_id(value)

@@ -1,14 +1,13 @@
-"""LangGraph StateGraph 조립.
+"""Build the bounded, recovery-capable policy-agent LangGraph.
 
-Router -> (Conversation | Profile Extractor -> Missing Slot -> Search ->
-Eligibility Scorer -> Response) -> Guardrail 순서로 흐른다.
-session_id 를 thread_id 로 사용하는 MemorySaver는 실행 중 상태를 유지하고,
-API 경계의 Supabase 메모리는 재시작 뒤 최근 대화와 검색 계획을 복원한다.
+The graph exposes only meaningful orchestration steps.  Contract validation,
+profile extraction, and missing-slot calculation are part of one request-plan
+node; deterministic direct responses share one path.  Search and answer loops
+have explicit counters in turn state and therefore cannot run indefinitely.
 """
 
 from __future__ import annotations
 
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
 from app.graph import edges as E
@@ -19,45 +18,55 @@ from app.graph.state import AgentState
 def build_agent_graph():
     graph = StateGraph(AgentState)
 
-    graph.add_node("route_intent", N.router_node)
-    graph.add_node("extract_profile", N.profile_extractor_node)
-    graph.add_node("check_missing_slots", N.missing_slot_node)
-    graph.add_node("ask_clarification", N.clarification_node)
-    graph.add_node("search_policy", N.policy_search_node)
-    graph.add_node("score_eligibility", N.eligibility_scorer_node)
-    graph.add_node("compose_response", N.response_node)
-    graph.add_node("conversation", N.conversation_node)
-    graph.add_node("guardrail", N.guardrail_node)
+    graph.add_node("prepare_request", N.prepare_request_node)
+    graph.add_node("direct_response", N.direct_response_node)
+    graph.add_node("retrieve", N.policy_search_node)
+    graph.add_node("assess_evidence", N.evidence_assessment_node)
+    graph.add_node("rewrite_query", N.rewrite_query_node)
+    graph.add_node("build_answer", N.response_node)
+    graph.add_node("verify_answer", N.response_validator_node)
+    graph.add_node("finalize", N.finalize_response_node)
 
-    graph.set_entry_point("route_intent")
-
+    graph.set_entry_point("prepare_request")
     graph.add_conditional_edges(
-        "route_intent",
-        E.route_after_router,
+        "prepare_request",
+        E.route_after_prepare,
         {
-            "extract_profile": "extract_profile",
-            "conversation": "conversation",
+            "direct_response": "direct_response",
+            "retrieve": "retrieve",
         },
     )
 
-    graph.add_edge("extract_profile", "check_missing_slots")
+    graph.add_edge("retrieve", "assess_evidence")
     graph.add_conditional_edges(
-        "check_missing_slots",
-        E.route_after_missing_slot,
+        "assess_evidence",
+        E.route_after_evidence,
         {
-            "ask_clarification": "ask_clarification",
-            "search_policy": "search_policy",
+            "retrieve": "retrieve",
+            "rewrite_query": "rewrite_query",
+            "build_answer": "build_answer",
+            "direct_response": "direct_response",
         },
     )
-    graph.add_edge("search_policy", "score_eligibility")
-    graph.add_edge("score_eligibility", "compose_response")
+    graph.add_edge("rewrite_query", "retrieve")
 
-    for terminal in ("ask_clarification", "compose_response", "conversation"):
-        graph.add_edge(terminal, "guardrail")
+    graph.add_edge("build_answer", "verify_answer")
+    graph.add_conditional_edges(
+        "verify_answer",
+        E.route_after_verification,
+        {
+            "build_answer": "build_answer",
+            "direct_response": "direct_response",
+            "finalize": "finalize",
+        },
+    )
 
-    graph.add_edge("guardrail", END)
+    # Fixed/direct replies are verified too; this makes the general-scope and
+    # startup-template checks real graph defenses instead of dead functions.
+    graph.add_edge("direct_response", "verify_answer")
+    graph.add_edge("finalize", END)
 
-    return graph.compile(checkpointer=MemorySaver())
+    return graph.compile()
 
 
 _agent_graph = None

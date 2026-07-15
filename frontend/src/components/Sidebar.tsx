@@ -76,7 +76,7 @@ export default function Sidebar({ chats, activeChatId, onSelectChat, onNewChat, 
               정책나침반
             </div>
             <div style={{ fontSize: "11px", color: "#6b7280", marginTop: "2px" }}>
-              정부 지원사업 AI
+              청년정책·훈련 AI
             </div>
           </div>
         </div>

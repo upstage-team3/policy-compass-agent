@@ -1,13 +1,12 @@
 [project]
 name = "policy-compass"
 version = "0.1.0"
-description = "Policy Compass - 사용자 조건 기반 정부 지원사업 추천 및 신청 준비 상담 AI Agent"
+description = "Policy Compass - 청년정책과 고용24 훈련·채용 정보 안내 AI Agent"
 readme = "README.md"
 requires-python = ">=3.11"
 keywords = [
     "policy-recommendation",
     "government-support-programs",
-    "bizinfo",
     "ai-agent",
     "langgraph",
     "upstage",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import xml.etree.ElementTree as ET
@@ -8,11 +9,15 @@ from typing import Any
 
 import httpx
 
-from app.core.config import get_settings
+from app.core.config import get_settings, source_http_timeout
 from app.core.http import log_external_api_error
+from app.core.regions import resolve_region
+from app.core.xml_utils import xml_error_message
 from app.tools.schemas import RecruitmentInfoItem, RecruitmentInfoSearchInput
 
 logger = logging.getLogger(__name__)
+
+_POST_FILTER_FETCH_MULTIPLIER = 3
 
 _PERSONAL_KEY_LIMIT_MESSAGE = "개인회원은 사용할 수 없는 OPEN-API"
 _WORK24_HOME = "https://www.work24.go.kr/"
@@ -20,6 +25,7 @@ _EVENT_AREA_CODES = {
     "서울": "51",
     "강원": "51",
     "부산": "52",
+    "울산": "52",
     "경남": "52",
     "대구": "53",
     "경북": "53",
@@ -27,6 +33,7 @@ _EVENT_AREA_CODES = {
     "인천": "54",
     "광주": "55",
     "전남": "55",
+    "전남광주": "55",
     "전북": "55",
     "제주": "55",
     "대전": "56",
@@ -34,6 +41,11 @@ _EVENT_AREA_CODES = {
     "충북": "56",
     "세종": "56",
 }
+
+
+def _event_area_code(region: str | None) -> str | None:
+    resolved = resolve_region(region)
+    return _EVENT_AREA_CODES.get(resolved.sido) if resolved else None
 
 
 def _compact_text(value: str | None) -> str | None:
@@ -78,7 +90,7 @@ def recruitment_fallback_guide(reason: str, query: RecruitmentInfoSearchInput) -
     region = query.preferred_work_region or "희망 지역"
     summary = (
         "현재 개인회원 API 권한으로 채용정보목록/상세를 직접 조회하기 어렵습니다. "
-        "대신 허용된 채용행사·공채속보·공채기업정보 API를 조회합니다. "
+        "대신 채용행사·공채속보 API를 조회합니다. "
         f"결과가 없으면 고용24에서 '{desired_job}', '{region}', 신입/인턴/공채 조건으로 확인해보세요."
     )
     return RecruitmentInfoItem(
@@ -103,9 +115,10 @@ def normalize_recruitment_items(
     record_specs = {
         "event": {"empEvent"},
         "open_recruitment": {"dhsOpenEmpInfo", "item"},
-        "company": {"dhsOpenEmpHireInfo"},
     }
     allowed_tags = record_specs.get(item_type, set().union(*record_specs.values()))
+    if error := xml_error_message(root, record_tags=allowed_tags):
+        raise Work24RecruitmentResponseError(error)
     records = [node for node in root.iter() if _local_name(node.tag) in allowed_tags]
     items: list[RecruitmentInfoItem] = []
 
@@ -114,19 +127,19 @@ def normalize_recruitment_items(
         resolved_type = item_type or _infer_item_type(node)
         if resolved_type == "event":
             items.append(_normalize_event(values, idx))
-        elif resolved_type == "company":
-            items.append(_normalize_company(values, idx))
         else:
             items.append(_normalize_open_recruitment(values, idx))
     return items
+
+
+class Work24RecruitmentResponseError(ValueError):
+    """The API returned valid XML that explicitly represents a failure."""
 
 
 def _infer_item_type(node: ET.Element) -> str:
     tag = _local_name(node.tag)
     if tag == "empEvent":
         return "event"
-    if tag == "dhsOpenEmpHireInfo":
-        return "company"
     return "open_recruitment"
 
 
@@ -168,18 +181,6 @@ def _normalize_open_recruitment(values: dict[str, str | None], idx: int) -> Recr
     )
 
 
-def _normalize_company(values: dict[str, str | None], idx: int) -> RecruitmentInfoItem:
-    return RecruitmentInfoItem(
-        item_id=values.get("empCoNo") or f"company-{idx}",
-        item_type="company",
-        title=values.get("coNm") or "공채기업명 확인 필요",
-        company=values.get("coNm"),
-        summary=_first(values, "coIntroSummaryCont", "coIntroCont", "mainBusiCont", "coClcdNm"),
-        detail_url=values.get("homepg") or _WORK24_HOME,
-        raw=values,
-    )
-
-
 def _round_robin(groups: Sequence[list[RecruitmentInfoItem]], limit: int) -> list[RecruitmentInfoItem]:
     result: list[RecruitmentInfoItem] = []
     for index in range(max((len(group) for group in groups), default=0)):
@@ -194,8 +195,8 @@ def _round_robin(groups: Sequence[list[RecruitmentInfoItem]], limit: int) -> lis
 class Work24RecruitmentRepository:
     """고용24 개인회원에 허용된 채용 보조 정보 API 접근 계층.
 
-    fallback_repository는 라이브 API 키 미설정 또는 3개 하위 API 호출이 전부
-    실패/결과 없음으로 끝났을 때만 사용되는 Supabase 캐시 조회 계층이다
+    fallback_repository는 라이브 API 키 미설정 또는 2개 하위 API 호출이 전부
+    실패했을 때만 사용되는 Supabase 캐시 조회 계층이다
     (app.repositories.supabase_fallback.SupabaseRecruitmentInfoFallback와 호환되는
     search(query) -> list[RecruitmentInfoItem] 메서드가 있으면 된다).
     """
@@ -226,71 +227,78 @@ class Work24RecruitmentRepository:
                 return cached
             return [recruitment_fallback_guide("EMPLOYMENT24_JOB_API_KEY 미설정", query)]
 
+        fetch_size = min(query.page_size * _POST_FILTER_FETCH_MULTIPLIER, 100)
         common_params: dict[str, Any] = {
             "authKey": self._settings.employment24_job_api_key,
             "callTp": "L",
             "returnType": "XML",
             "startPage": str(query.page),
-            "display": str(query.page_size),
+            "display": str(fetch_size),
         }
         keyword = query.desired_job or query.keywords
         groups: list[list[RecruitmentInfoItem]] = []
+        failed_sources: list[str] = []
 
-        async with httpx.AsyncClient(timeout=20) as client:
-            if query.include_open_recruitments:
-                params = dict(common_params)
-                if keyword:
-                    params["empWantedTitle"] = keyword
-                if query.career_level and "신입" in query.career_level:
-                    params["empWantedCareerCd"] = "30"
-                elif query.career_level and "인턴" in query.career_level:
-                    params["empWantedCareerCd"] = "40"
-                groups.append(
-                    await self._fetch(
-                        client,
-                        self._settings.employment24_open_recruitment_api_url,
-                        params,
-                        "open_recruitment",
-                        "공채속보",
-                    )
-                )
+        def collect(result: list[RecruitmentInfoItem] | None, label: str) -> None:
+            if result is None:
+                failed_sources.append(label)
+            else:
+                groups.append(result)
 
-            if query.include_events:
-                params = dict(common_params)
-                if keyword:
-                    params["keyword"] = keyword
-                area_code = _EVENT_AREA_CODES.get(query.preferred_work_region or "")
-                if area_code:
-                    params["areaCd"] = area_code
-                groups.append(
-                    await self._fetch(
-                        client,
-                        self._settings.employment24_job_event_api_url,
-                        params,
-                        "event",
-                        "채용행사",
-                    )
-                )
+        async with httpx.AsyncClient(timeout=source_http_timeout(self._settings)) as client:
+            open_params = dict(common_params)
+            if keyword:
+                open_params["empWantedTitle"] = keyword
+            if query.career_level and "신입" in query.career_level:
+                open_params["empWantedCareerCd"] = "30"
+            elif query.career_level and "인턴" in query.career_level:
+                open_params["empWantedCareerCd"] = "40"
 
-            if query.include_company_info:
-                groups.append(
-                    await self._fetch(
-                        client,
-                        self._settings.employment24_company_api_url,
-                        common_params,
-                        "company",
-                        "공채기업정보",
-                    )
-                )
+            event_params = dict(common_params)
+            if keyword:
+                event_params["keyword"] = keyword
+            area_code = _event_area_code(query.preferred_work_region)
+            if area_code:
+                event_params["areaCd"] = area_code
 
-        items = _round_robin(groups, query.page_size)
+            open_result, event_result = await asyncio.gather(
+                self._fetch(
+                    client,
+                    self._settings.employment24_open_recruitment_api_url,
+                    open_params,
+                    "open_recruitment",
+                    "공채속보",
+                ),
+                self._fetch(
+                    client,
+                    self._settings.employment24_job_event_api_url,
+                    event_params,
+                    "event",
+                    "채용행사",
+                ),
+            )
+            collect(open_result, "공채속보")
+            collect(event_result, "채용행사")
+
+        # Region/career evidence is checked after normalization, so preserve a
+        # bounded oversampled pool rather than truncating before those gates.
+        items = _round_robin(groups, fetch_size)
         if items:
+            if failed_sources:
+                reason = f"일부 고용24 채용 보조 API 호출 실패: {', '.join(failed_sources)}"
+                return [*items, recruitment_fallback_guide(reason, query)]
             return items
-
-        logger.warning("[캐시 폴백] 허용된 고용24 채용 API 결과 없음 → 캐시 조회 시도")
-        cached = await self._fallback_search(query)
-        if cached:
-            return cached
+        # A successful empty live response is authoritative NO_MATCH, not an
+        # outage. Only replace it with cache data when every live endpoint
+        # failed; otherwise stale cache rows could be presented as current.
+        if len(failed_sources) == 2:
+            logger.warning("[캐시 폴백] 고용24 채용 API 호출 전면 실패 → 캐시 조회 시도")
+            cached = await self._fallback_search(query)
+            if cached:
+                return cached
+        if failed_sources:
+            reason = f"고용24 채용 보조 API 호출 실패: {', '.join(failed_sources)}"
+            return [recruitment_fallback_guide(reason, query)]
         return [recruitment_fallback_guide("허용된 고용24 채용 API 결과 없음", query)]
 
     async def _fetch(
@@ -300,16 +308,20 @@ class Work24RecruitmentRepository:
         params: dict[str, Any],
         item_type: str,
         label: str,
-    ) -> list[RecruitmentInfoItem]:
+    ) -> list[RecruitmentInfoItem] | None:
         try:
             response = await client.get(url, params=params)
             response.raise_for_status()
         except Exception as exc:  # noqa: BLE001 - one endpoint must not block the others
             log_external_api_error(logger, f"고용24 {label} API", exc)
-            return []
+            return None
+
+        if is_personal_key_limited_response(response.text):
+            logger.warning("고용24 %s API가 현재 개인키 권한을 허용하지 않습니다.", label)
+            return None
 
         try:
             return normalize_recruitment_items(response.text, item_type)
-        except ET.ParseError:
-            logger.warning("고용24 %s XML 파싱 실패", label)
-            return []
+        except (ET.ParseError, Work24RecruitmentResponseError):
+            logger.warning("고용24 %s XML 오류 응답", label)
+            return None
