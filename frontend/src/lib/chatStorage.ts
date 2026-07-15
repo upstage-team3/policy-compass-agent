@@ -113,6 +113,10 @@ function parsePolicyCard(value: unknown): PolicyCard | null {
   const target = safeString(value.target)
   const amount = safeString(value.amount)
   const period = safeString(value.period)
+  const applyStart =
+    value.applyStart === undefined ? undefined : safeString(value.applyStart)
+  const applyEnd =
+    value.applyEnd === undefined ? undefined : safeString(value.applyEnd)
   const reason = safeString(value.reason)
   const ministry = safeString(value.ministry)
   const category = safeString(value.category)
@@ -162,6 +166,8 @@ function parsePolicyCard(value: unknown): PolicyCard | null {
     region,
     scope,
     distanceKm,
+    ...(applyStart !== undefined ? { applyStart } : {}),
+    ...(applyEnd !== undefined ? { applyEnd } : {}),
     ...(matchScore !== undefined ? { matchScore } : {}),
     ...(evidenceCoverage !== undefined ? { evidenceCoverage } : {}),
     ...(url ? { url } : {}),
@@ -229,6 +235,8 @@ function sanitizePolicyCard(card: PolicyCard): PolicyCard {
     target: sanitizeStoredText(card.target),
     amount: sanitizeStoredText(card.amount),
     period: sanitizeStoredText(card.period),
+    applyStart: card.applyStart ? sanitizeStoredText(card.applyStart) : card.applyStart,
+    applyEnd: card.applyEnd ? sanitizeStoredText(card.applyEnd) : card.applyEnd,
     reason: sanitizeStoredText(card.reason),
     ministry: sanitizeStoredText(card.ministry),
     category: sanitizeStoredText(card.category),

@@ -4,6 +4,8 @@ export interface PolicyCard {
   target: string;
   amount: string;
   period: string;
+  applyStart?: string | null;
+  applyEnd?: string | null;
   reason: string;
   url?: string;
   ministry: string;

@@ -130,6 +130,8 @@ export function toPolicyCard(rec: BackendRecommendation): PolicyCard {
     target: policy.target_description,
     amount: policy.support_content,
     period: `${policy.apply_start ?? "상시"} ~ ${policy.apply_end ?? "상시"}`,
+    applyStart: policy.apply_start,
+    applyEnd: policy.apply_end,
     reason: rec.match_reasons.join(" "),
     ministry: policy.agency,
     category: policy.category,
