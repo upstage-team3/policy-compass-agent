@@ -109,6 +109,8 @@ async def test_youth_no_results_reply_does_not_recommend_other_projects():
 
 
 def test_youth_policy_template_groups_truly_missing_application_fields():
+    """세부 내용은 프론트 카드로 표시되므로, 템플릿 응답은 짧은 안내 멘트만 담아야 한다."""
+
     response = compose_youth_policy_response(
         [
             {
@@ -120,8 +122,8 @@ def test_youth_policy_template_groups_truly_missing_application_fields():
         ]
     )
 
-    assert "사업 기간: 2026-01-01 ~ 2026-12-31" in response
-    assert "신청 기간·신청 방법·상세 링크 정보가 등록되어 있지 않아요" in response
+    assert "카드" in response
+    assert "사업 기간: 2026-01-01 ~ 2026-12-31" not in response
     assert "application_period" not in response
 
 

@@ -119,13 +119,40 @@ def training_fallback_guide(reason: str, query: TrainingCourseSearchInput) -> Tr
 
 
 class Work24TrainingRepository:
-    """고용24 국민내일배움카드 훈련과정 API 접근 계층."""
+    """고용24 국민내일배움카드 훈련과정 API 접근 계층.
 
-    def __init__(self) -> None:
+    fallback_repository는 라이브 API 키 미설정 또는 호출 자체 실패(요청 한도 초과,
+    장애, 파싱 실패 등) 시에만 사용되는 Supabase 캐시 조회 계층이다
+    (app.repositories.supabase_fallback.SupabaseTrainingCourseFallback와 호환되는
+    search(query) -> list[TrainingCourseItem] 메서드가 있으면 된다). 라이브 호출이
+    정상 응답했는데 결과가 0건인 경우는 캐시로 대체하지 않는다 — 그건 API 장애가
+    아니라 실제로 조건에 맞는 과정이 없다는 뜻이라서다.
+    """
+
+    def __init__(self, fallback_repository: object | None = None) -> None:
         self._settings = get_settings()
+        self._fallback_repository = fallback_repository
+
+    async def _fallback_search(self, query: TrainingCourseSearchInput) -> list[TrainingCourseItem]:
+        if self._fallback_repository is None:
+            return []
+        try:
+            items = await self._fallback_repository.search(query)
+        except Exception:  # noqa: BLE001 - 캐시 fallback 실패가 상위 흐름을 막으면 안 됨
+            logger.exception("[캐시 폴백] 고용24 훈련과정 캐시 조회 실패")
+            return []
+        if items:
+            logger.info("[캐시 폴백] 고용24 훈련과정 캐시에서 %d건 반환", len(items))
+        else:
+            logger.info("[캐시 폴백] 고용24 훈련과정 캐시에도 결과 없음")
+        return items
 
     async def search(self, query: TrainingCourseSearchInput) -> list[TrainingCourseItem]:
         if not self._settings.employment24_training_api_key:
+            logger.warning("[캐시 폴백] EMPLOYMENT24_TRAINING_API_KEY 미설정 → 캐시 조회 시도")
+            cached = await self._fallback_search(query)
+            if cached:
+                return cached
             return [training_fallback_guide("EMPLOYMENT24_TRAINING_API_KEY 미설정", query)]
 
         start, end = default_training_period()
@@ -152,12 +179,20 @@ class Work24TrainingRepository:
                 response.raise_for_status()
         except Exception as exc:  # noqa: BLE001
             log_external_api_error(logger, "고용24 훈련과정 API", exc)
+            logger.warning("[캐시 폴백] 고용24 훈련과정 API 호출 실패 → 캐시 조회 시도")
+            cached = await self._fallback_search(query)
+            if cached:
+                return cached
             return [training_fallback_guide("고용24 훈련과정 API 호출 실패", query)]
 
         try:
             items = normalize_training_courses(response.text)
         except ET.ParseError:
             logger.warning("고용24 훈련과정 XML 파싱 실패", exc_info=True)
+            logger.warning("[캐시 폴백] 고용24 훈련과정 응답 파싱 실패 → 캐시 조회 시도")
+            cached = await self._fallback_search(query)
+            if cached:
+                return cached
             return [training_fallback_guide("고용24 훈련과정 응답 파싱 실패", query)]
 
         if items:

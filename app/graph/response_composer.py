@@ -278,53 +278,18 @@ async def compose_conversation_reply(
 
 
 def compose_scored_template(scored: list[dict]) -> str:
+    """세부 내용은 프론트 카드로 표시되므로, 여기서는 짧은 안내 멘트만 반환한다."""
+
     nearby_only = bool(scored) and all(item.get("recommendation_scope") == "nearby_reference" for item in scored)
     if nearby_only:
-        lines = [
-            "요청 지역에 정확히 일치하거나 전국 대상인 지원사업은 찾지 못했어요.",
-            "아래는 가까운 지역 참고 결과이며, 거주 요건 때문에 신청하지 못할 수 있어요.",
-        ]
-    else:
-        lines = [
-            "현재 파악한 조건을 바탕으로 확인해볼 만한 지원사업을 정리했어요.",
-            "최종 신청 가능 여부는 공고별 세부 조건에 따라 달라질 수 있어요.",
-        ]
-    for idx, item in enumerate(scored, start=1):
-        policy = item["policy"]
-        scope_label = {
-            "exact": "요청 지역 일치",
-            "nationwide": "전국 대상",
-            "nearby_reference": "인접 지역 참고",
-        }.get(item.get("recommendation_scope"), "대상 지역 확인 필요")
-        lines.append("")
-        lines.append(f"{idx}. {policy['title']} ({policy['agency']})")
-        lines.append(f"   - 추천 범위: {scope_label}")
-        reason_label = "참고 이유" if nearby_only else "추천 이유"
-        lines.append(f"   - {reason_label}: {' '.join(item['match_reasons'])}")
-        if not nearby_only:
-            lines.append(
-                "   - 추천 적합도: "
-                f"{round(item['match_score'] * 100)}점 / 근거 확인률 "
-                f"{round(item['evidence_coverage'] * 100)}%"
-            )
-        if policy.get("region"):
-            lines.append(f"   - 대상 지역: {', '.join(policy['region'])}")
-        if nearby_only and policy.get("distance_km") is not None:
-            lines.append(f"   - 거리: 대표 좌표 기준 약 {policy['distance_km']:g}km(직선거리)")
-        lines.append(f"   - 지원 대상: {policy['target_description']}")
-        lines.append(f"   - 지원 내용: {policy['support_content']}")
-        lines.append(
-            "   - 신청 기간: "
-            f"{policy.get('apply_start') or '상시'} ~ {policy.get('apply_end') or '상시'} "
-            f"[{item['deadline_status']}]"
+        return (
+            "요청 지역에 정확히 일치하거나 전국 대상인 지원사업은 찾지 못했어요. "
+            "아래 카드는 가까운 지역 참고 결과이며, 거주 요건 때문에 신청하지 못할 수 있어요."
         )
-        lines.append(f"   - 신청 방법: {policy['apply_method']}")
-        if item["follow_up_checks"]:
-            lines.append(f"   - 신청 전 확인 필요: {' '.join(item['follow_up_checks'])}")
-        else:
-            lines.append("   - 신청 전 확인 필요: 소득, 거주기간, 중복 수혜 제한 등 세부 조건")
-        lines.append(f"   - 원문 링크: {policy['source_url']}")
-    return "\n".join(lines)
+    return (
+        f"현재 조건에 맞는 지원사업 {len(scored)}건을 아래 카드로 정리했어요. "
+        "최종 신청 가능 여부는 카드의 원문 링크에서 확인해주세요."
+    )
 
 
 def compose_youth_policy_response(items: list[dict]) -> str:
@@ -338,52 +303,15 @@ def compose_youth_policy_response(items: list[dict]) -> str:
 
     nearby_only = bool(items) and all(item.get("match_scope") == "nearby" for item in items)
     if nearby_only:
-        lines = [
-            "요청 지역에 정확히 일치하거나 전국 대상인 청년정책은 찾지 못했어요.",
-            "아래는 가까운 지역 참고 결과이며, 해당 지역 거주 요건 때문에 신청하지 못할 수 있어요.",
-        ]
-    else:
-        lines = [
-            "현재 조건에서 확인해볼 만한 청년지원사업을 찾았어요. 우선 세 가지를 살펴볼게요.",
-        ]
-    for idx, item in enumerate(items[:3], start=1):
-        lines.append("")
-        lines.append(f"{idx}. {item['title']}")
-        if item.get("organization"):
-            lines.append(f"   - 운영/주관: {item['organization']}")
-        if item.get("region"):
-            lines.append(f"   - 지역: {item['region']}")
-        if nearby_only and item.get("distance_km") is not None:
-            lines.append(f"   - 거리: 대표 좌표 기준 약 {item['distance_km']:g}km(직선거리)")
-        lines.append(f"   - 지원 대상: {item.get('target_summary') or '공식 공고 확인 필요'}")
-        lines.append(f"   - 지원 내용: {item.get('support_summary') or '공식 공고 확인 필요'}")
-        if item.get("business_period"):
-            lines.append(f"   - 사업 기간: {item['business_period']}")
-        if item.get("application_period"):
-            lines.append(f"   - 신청 기간: {item['application_period']}")
-        if item.get("application_method"):
-            lines.append(f"   - 신청 방법: {item['application_method']}")
-        if item.get("detail_url"):
-            lines.append(f"   - 상세 링크: {item['detail_url']}")
-        missing = [
-            label
-            for key, label in (
-                ("application_period", "신청 기간"),
-                ("application_method", "신청 방법"),
-                ("detail_url", "상세 링크"),
-            )
-            if not item.get(key)
-        ]
-        if missing:
-            lines.append(f"   - 온통청년 API에 {'·'.join(missing)} 정보가 등록되어 있지 않아요.")
-        if item.get("fallback_reason"):
-            lines.append(f"   - 데이터 안내: {item['fallback_reason']}")
-    lines.append("")
-    if nearby_only:
-        lines.append("가까운 지역 정보는 참고용이며, 거주 요건은 공고 원문에서 먼저 확인해주세요.")
-    else:
-        lines.append("최종 자격과 신청 가능 여부는 공고 원문 또는 담당 기관에서 꼭 확인해주세요.")
-    return "\n".join(lines)
+        return (
+            "요청 지역에 정확히 일치하거나 전국 대상인 청년정책은 찾지 못했어요. "
+            "아래 카드는 가까운 지역 참고 결과이며, 해당 지역 거주 요건 때문에 신청하지 못할 수 있어요."
+        )
+    shown = items[:3]
+    return (
+        f"현재 조건에 맞는 청년지원사업 {len(shown)}건을 아래 카드로 정리했어요. "
+        "최종 자격과 신청 가능 여부는 카드의 상세 링크에서 확인해주세요."
+    )
 
 
 def compose_training_response(items: list[dict]) -> str:
@@ -400,26 +328,11 @@ def compose_training_response(items: list[dict]) -> str:
             f"- 데이터 안내: {guide.get('fallback_reason') or '검색 결과 없음'}"
         )
 
-    lines = [
-        "고용24 국민내일배움카드 훈련과정에서 확인해볼 만한 과정을 정리했어요.",
-        "수강 가능 여부와 자비부담액은 고용24 상세 화면에서 다시 확인해주세요.",
-    ]
-    for idx, item in enumerate(items[:3], start=1):
-        lines.append("")
-        lines.append(f"{idx}. {item['title']}")
-        lines.append(f"   - 훈련기관: {item.get('institution') or '기관명 확인 필요'}")
-        lines.append(f"   - 지역/주소: {item.get('region') or item.get('address') or '지역 확인 필요'}")
-        lines.append(
-            "   - 훈련 기간: "
-            f"{item.get('start_date') or '시작일 확인 필요'} ~ {item.get('end_date') or '종료일 확인 필요'}"
-        )
-        lines.append(f"   - 비용: {item.get('cost') or item.get('actual_cost') or '고용24 상세 확인 필요'}")
-        if item.get("ncs_code"):
-            lines.append(f"   - NCS 코드: {item['ncs_code']}")
-        lines.append(f"   - 상세 URL: {item.get('detail_url') or '고용24에서 과정명으로 검색 필요'}")
-        if item.get("fallback_reason"):
-            lines.append(f"   - 데이터 안내: {item['fallback_reason']}")
-    return "\n".join(lines)
+    shown = items[:3]
+    return (
+        f"고용24 국민내일배움카드 훈련과정 {len(shown)}건을 아래 카드로 정리했어요. "
+        "수강 가능 여부와 자비부담액은 카드의 상세 링크에서 다시 확인해주세요."
+    )
 
 
 def compose_recruitment_response(items: list[dict]) -> str:
@@ -435,17 +348,5 @@ def compose_recruitment_response(items: list[dict]) -> str:
             "검색 키워드와 확인해야 할 공고 조건을 더 구체적으로 정리해드릴 수 있어요."
         )
 
-    lines = ["고용24에서 확인된 채용 관련 보조 정보를 정리했어요."]
-    for idx, item in enumerate(items[:3], start=1):
-        lines.append("")
-        lines.append(f"{idx}. {item['title']}")
-        if item.get("company"):
-            lines.append(f"   - 기업: {item['company']}")
-        if item.get("region"):
-            lines.append(f"   - 지역: {item['region']}")
-        if item.get("end_date"):
-            lines.append(f"   - 마감일: {item['end_date']}")
-        if item.get("summary"):
-            lines.append(f"   - 요약: {item['summary']}")
-        lines.append(f"   - 원문 링크: {item.get('detail_url') or '고용24 상세 확인 필요'}")
-    return "\n".join(lines)
+    shown = items[:3]
+    return f"고용24에서 확인된 채용 관련 보조 정보 {len(shown)}건을 아래 카드로 정리했어요."

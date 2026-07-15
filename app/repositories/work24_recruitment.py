@@ -192,13 +192,38 @@ def _round_robin(groups: Sequence[list[RecruitmentInfoItem]], limit: int) -> lis
 
 
 class Work24RecruitmentRepository:
-    """고용24 개인회원에 허용된 채용 보조 정보 API 접근 계층."""
+    """고용24 개인회원에 허용된 채용 보조 정보 API 접근 계층.
 
-    def __init__(self) -> None:
+    fallback_repository는 라이브 API 키 미설정 또는 3개 하위 API 호출이 전부
+    실패/결과 없음으로 끝났을 때만 사용되는 Supabase 캐시 조회 계층이다
+    (app.repositories.supabase_fallback.SupabaseRecruitmentInfoFallback와 호환되는
+    search(query) -> list[RecruitmentInfoItem] 메서드가 있으면 된다).
+    """
+
+    def __init__(self, fallback_repository: object | None = None) -> None:
         self._settings = get_settings()
+        self._fallback_repository = fallback_repository
+
+    async def _fallback_search(self, query: RecruitmentInfoSearchInput) -> list[RecruitmentInfoItem]:
+        if self._fallback_repository is None:
+            return []
+        try:
+            items = await self._fallback_repository.search(query)
+        except Exception:  # noqa: BLE001 - 캐시 fallback 실패가 상위 흐름을 막으면 안 됨
+            logger.exception("[캐시 폴백] 고용24 채용정보 캐시 조회 실패")
+            return []
+        if items:
+            logger.info("[캐시 폴백] 고용24 채용정보 캐시에서 %d건 반환", len(items))
+        else:
+            logger.info("[캐시 폴백] 고용24 채용정보 캐시에도 결과 없음")
+        return items
 
     async def search(self, query: RecruitmentInfoSearchInput) -> list[RecruitmentInfoItem]:
         if not self._settings.employment24_job_api_key:
+            logger.warning("[캐시 폴백] EMPLOYMENT24_JOB_API_KEY 미설정 → 캐시 조회 시도")
+            cached = await self._fallback_search(query)
+            if cached:
+                return cached
             return [recruitment_fallback_guide("EMPLOYMENT24_JOB_API_KEY 미설정", query)]
 
         common_params: dict[str, Any] = {
@@ -261,6 +286,11 @@ class Work24RecruitmentRepository:
         items = _round_robin(groups, query.page_size)
         if items:
             return items
+
+        logger.warning("[캐시 폴백] 허용된 고용24 채용 API 결과 없음 → 캐시 조회 시도")
+        cached = await self._fallback_search(query)
+        if cached:
+            return cached
         return [recruitment_fallback_guide("허용된 고용24 채용 API 결과 없음", query)]
 
     async def _fetch(
