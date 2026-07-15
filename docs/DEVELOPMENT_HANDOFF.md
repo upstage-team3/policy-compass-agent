@@ -209,6 +209,9 @@ React UI 변경과 충돌을 피하기 위해 다음 계약을 유지한다.
   `금융·복지·문화`, `참여·기반`)와 고용24 훈련·채용정보만 노출한다.
 - React 입력창 placeholder는 `청년 정책 및 훈련에 대해 질문해 주세요...`로
   범용 정부 지원사업 검색 범위를 표방하지 않는다.
+- React `Chat.id`는 HTTPS의 `randomUUID` 또는 HTTP에서도 제공되는
+  `getRandomValues` 기반 UUIDv4로 만든다. 기존 로컬 기록의 비 UUID
+  채팅 ID는 로드 시 새 UUIDv4로 교체한다.
 - 추천 카드 DTO: `policy`, `match_score`, `evidence_coverage`, `match_reasons`,
   `follow_up_checks`, `is_recommendable`, `recommendation_scope`, `deadline_status`
 - feedback: `POST /api/chat/feedback`와 Langfuse `user-thumbs` 연결

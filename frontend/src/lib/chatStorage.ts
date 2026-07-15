@@ -1,5 +1,6 @@
 import type { Chat, Message, PolicyCard } from "../types"
 import type { UserProfileDefaults } from "./api"
+import { generateUuidV4, isUuidV4 } from "./uuid.ts"
 
 export const CHAT_STORAGE_KEY = "policy-compass.chat-state.v1"
 export const PROFILE_DEFAULTS_STORAGE_KEY = "policy-compass.profile-defaults.v1"
@@ -22,7 +23,8 @@ const SENSITIVE_PATTERNS = [
   },
   {
     label: "이메일 주소",
-    pattern: /(?<![\w.+-])[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?![\w.-])/g,
+    pattern:
+      /(?<![\w.+-])[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?![\w.-])/g,
   },
   {
     label: "계좌번호 형태",
@@ -199,7 +201,9 @@ function parseMessage(value: unknown): Message | null {
 
   const traceId = safeString(value.traceId)
   const feedback =
-    value.feedback === "up" || value.feedback === "down" ? value.feedback : undefined
+    value.feedback === "up" || value.feedback === "down"
+      ? value.feedback
+      : undefined
 
   return {
     id,
@@ -212,13 +216,19 @@ function parseMessage(value: unknown): Message | null {
   }
 }
 
-function parseChat(value: unknown): Chat | null {
+function parseChat(
+  value: unknown,
+  migratedSessionIds: Map<string, string>,
+): Chat | null {
   if (!isRecord(value) || !Array.isArray(value.messages)) return null
 
-  const id = safeId(value.id)
+  const storedId = safeId(value.id)
   const title = safeString(value.title)
   const createdAt = parseDate(value.createdAt)
-  if (!id || title === null || !createdAt) return null
+  if (!storedId || title === null || !createdAt) return null
+
+  const id = isUuidV4(storedId) ? storedId : generateUuidV4()
+  if (id !== storedId) migratedSessionIds.set(storedId, id)
 
   const messages = value.messages
     .slice(-MAX_MESSAGES_PER_CHAT)
@@ -235,7 +245,9 @@ function sanitizePolicyCard(card: PolicyCard): PolicyCard {
     target: sanitizeStoredText(card.target),
     amount: sanitizeStoredText(card.amount),
     period: sanitizeStoredText(card.period),
-    applyStart: card.applyStart ? sanitizeStoredText(card.applyStart) : card.applyStart,
+    applyStart: card.applyStart
+      ? sanitizeStoredText(card.applyStart)
+      : card.applyStart,
     applyEnd: card.applyEnd ? sanitizeStoredText(card.applyEnd) : card.applyEnd,
     reason: sanitizeStoredText(card.reason),
     ministry: sanitizeStoredText(card.ministry),
@@ -284,13 +296,17 @@ export function loadChatState(): ChatState | null {
       return null
     }
 
+    const migratedSessionIds = new Map<string, string>()
     const chats = raw.chats
       .slice(0, MAX_CHATS)
-      .map(parseChat)
+      .map((chat) => parseChat(chat, migratedSessionIds))
       .filter((chat): chat is Chat => chat !== null)
     const requestedActiveId = safeId(raw.activeChatId)
-    const activeChatId = chats.some((chat) => chat.id === requestedActiveId)
-      ? requestedActiveId
+    const migratedActiveId = requestedActiveId
+      ? (migratedSessionIds.get(requestedActiveId) ?? requestedActiveId)
+      : null
+    const activeChatId = chats.some((chat) => chat.id === migratedActiveId)
+      ? migratedActiveId
       : (chats[0]?.id ?? null)
 
     return { chats, activeChatId }

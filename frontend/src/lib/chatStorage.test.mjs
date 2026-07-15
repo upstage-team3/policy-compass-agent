@@ -58,13 +58,31 @@ function chat(id, messages = [message(`${id}-message`, "서울 청년정책")]) 
 
 test("save/load restores dates and the active backend session id", () => {
   useEmptyStorage()
-  saveChatState({ chats: [chat("session-1")], activeChatId: "session-1" })
+  const sessionId = "5aab327b-6412-4c74-a118-c69f45bbf879"
+  saveChatState({ chats: [chat(sessionId)], activeChatId: sessionId })
 
   const restored = loadChatState()
-  assert.equal(restored.activeChatId, "session-1")
+  assert.equal(restored.activeChatId, sessionId)
   assert.equal(restored.chats[0].messages[0].content, "서울 청년정책")
   assert.ok(restored.chats[0].createdAt instanceof Date)
   assert.ok(restored.chats[0].messages[0].timestamp instanceof Date)
+})
+
+test("legacy non-UUID chat ids are migrated before backend use", () => {
+  useEmptyStorage()
+  saveChatState({
+    chats: [chat("legacy-session")],
+    activeChatId: "legacy-session",
+  })
+
+  const restored = loadChatState()
+
+  assert.match(
+    restored.activeChatId,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  )
+  assert.equal(restored.chats[0].id, restored.activeChatId)
+  assert.equal(restored.chats[0].messages[0].content, "서울 청년정책")
 })
 
 test("sensitive identifiers are masked before browser persistence", () => {
@@ -88,7 +106,9 @@ test("sensitive identifiers are detected before network submission", () => {
   const phone = "010-1234-5678"
   const email = "person@example.com"
 
-  assert.deepEqual(detectSensitiveData(residentId), ["주민등록번호·외국인등록번호 형태"])
+  assert.deepEqual(detectSensitiveData(residentId), [
+    "주민등록번호·외국인등록번호 형태",
+  ])
   assert.deepEqual(detectSensitiveData(phone), ["전화번호 형태"])
   assert.deepEqual(detectSensitiveData(email), ["이메일 주소"])
 
