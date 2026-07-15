@@ -12,15 +12,13 @@ import {
   saveChatState,
   saveProfileDefaults,
 } from "./lib/chatStorage"
+import { generateUuidV4 } from "./lib/uuid.ts"
 import Sidebar from "./components/Sidebar"
 import ChatMessage from "./components/ChatMessage"
 import ChatInput from "./components/ChatInput"
 
 function generateId() {
-  return (
-    globalThis.crypto?.randomUUID?.() ??
-    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
-  )
+  return generateUuidV4()
 }
 
 function generateTitle(text: string): string {
@@ -220,7 +218,11 @@ export default function App() {
           ),
         )
       }
-    } catch {
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "일시적인 오류가 발생했어요. 잠시 후 다시 시도해주세요."
       setChats((prev) =>
         prev.map((c) =>
           c.id === activeChatId
@@ -231,8 +233,7 @@ export default function App() {
                   {
                     id: generateId(),
                     role: "assistant",
-                    content:
-                      "일시적인 오류가 발생했어요. 잠시 후 다시 시도해주세요.",
+                    content: errorMessage,
                     timestamp: new Date(),
                   },
                 ],
@@ -246,7 +247,10 @@ export default function App() {
     }
   }
 
-  const handleFeedback = (messageId: string, rating: RecommendationFeedback) => {
+  const handleFeedback = (
+    messageId: string,
+    rating: RecommendationFeedback,
+  ) => {
     if (!activeChatId) return
     const message = activeChat?.messages.find((m) => m.id === messageId)
 
@@ -430,7 +434,11 @@ export default function App() {
           >
             {activeChat ? (
               activeChat.messages.map((msg) => (
-                <ChatMessage key={msg.id} message={msg} onFeedback={handleFeedback} />
+                <ChatMessage
+                  key={msg.id}
+                  message={msg}
+                  onFeedback={handleFeedback}
+                />
               ))
             ) : (
               <div

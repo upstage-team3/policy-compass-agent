@@ -72,6 +72,11 @@ export async function streamChat(
   })
 
   if (!res.ok || !res.body) {
+    if (res.status === 422) {
+      throw new Error(
+        "채팅 세션을 확인하지 못했어요. 새 채팅을 만든 뒤 다시 시도해 주세요.",
+      )
+    }
     throw new Error(`채팅 서버 오류가 발생했어요 (status ${res.status}).`)
   }
 

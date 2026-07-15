@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "test": "node --experimental-strip-types --test src/lib/chatStorage.test.mjs",
+    "test": "node --experimental-strip-types --test src/lib/chatStorage.test.mjs src/lib/uuid.test.mjs",
     "preview": "vite preview",
     "format": "oxfmt"
   },
