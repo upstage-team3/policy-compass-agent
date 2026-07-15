@@ -74,7 +74,7 @@ export default function ChatInput({ onSend, disabled }: Props) {
           onKeyDown={handleKeyDown}
           onInput={handleInput}
           disabled={disabled}
-          placeholder="정부 지원사업에 대해 질문해 주세요... (Enter로 전송, Shift+Enter로 줄바꿈)"
+          placeholder="청년 정책 및 훈련에 대해 질문해 주세요... (Enter로 전송, Shift+Enter로 줄바꿈)"
           rows={1}
           style={{
             flex: 1,

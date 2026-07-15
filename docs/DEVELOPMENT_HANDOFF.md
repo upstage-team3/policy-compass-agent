@@ -1,234 +1,286 @@
 # 정책나침반 개발 인수인계
 
-최종 갱신: 2026-07-14
-기준: 지역 정규화·근거 기반 스코어링·새 채팅 기본 프로필·온통청년 장애 구분·로컬 UI 검증 반영
+최종 갱신: 2026-07-15
+기준: 8-node bounded graph, LLM-first language path, `SearchOutcome`, 세 소스 무점수 gate
 
 ## 새 개발 세션의 읽기 순서
 
-1. 이 문서에서 현재 상태와 다음 작업을 확인한다.
-2. [PROJECT_STATUS.md](PROJECT_STATUS.md)에서 구현 범위와 모듈 책임을 확인한다.
+1. 이 문서에서 현재 구조와 남은 위험을 확인한다.
+2. [PROJECT_STATUS.md](PROJECT_STATUS.md)에서 구현 상태를 확인한다.
 3. [NEXT_ACTIONS.md](NEXT_ACTIONS.md)에서 우선순위와 완료 조건을 확인한다.
-4. API 스키마가 필요하면 [API_TOOL_SCHEMA_DESIGN.md](API_TOOL_SCHEMA_DESIGN.md)를 읽는다.
-5. 배포 작업이면 [day4/DEPLOYMENT_RUNBOOK.md](day4/DEPLOYMENT_RUNBOOK.md)를 따른다.
+4. Tool 계약은 [API_TOOL_SCHEMA_DESIGN.md](API_TOOL_SCHEMA_DESIGN.md)를 읽는다.
+5. 배포는 [day4/DEPLOYMENT_RUNBOOK.md](day4/DEPLOYMENT_RUNBOOK.md)를 따른다.
+6. 전체 문서의 현재/역사 구분은 [README.md](README.md)에서 확인한다.
 
-일일회고 문서는 개발 기준 문서가 아니다. 코드와 이 문서가 다르면 먼저 실제 코드와 테스트를 확인한 뒤 이 문서를 갱신한다.
+일일회고와 2026-07-14 감사 문서는 의사결정 근거다. 현재 동작은 코드와 테스트를
+최종 기준으로 삼는다.
 
-## 현재 완료된 기반
+## 현재 제품 범위
 
-- Docker Multi-stage 이미지와 Docker Compose 구성 완료
-- GitHub Actions CI와 CD 자동 배포 구성 완료
-- Google Cloud Compute Engine 배포와 외부 `/api/health` 성공 이력 확인
-- Upstage Solar 실제 호출 확인
-- 일반 대화와 검색 없는 설명을 하나의 Conversation Node로 통합
-- LLM이 `action`, `response_mode`, `request_kind`, `search_query`를 함께 계획하도록 수정
-- 청년정책, 훈련, 채용, 기업마당 중 선택된 Tool만 호출하도록 분리
-- 키워드와 정규식 규칙을 정상 경로가 아닌 fallback 모듈로 격리
-- 검색 결과 응답 생성과 템플릿 fallback을 별도 컴포저로 분리
-- 개인회원에 허용된 고용24 채용행사·공채속보·공채기업정보 연동
-- 온통청년·기업마당 실제 응답 형식 정규화
-- 외부 API 오류 로그에 URL·query string·인증키가 남지 않도록 보완
-- 온통청년 정책명 검색이 0건이면 핵심 주제어로 완화해 재검색
-- 온통청년 `zipCd` 행정코드를 사용해 사용자 거주지역과 맞는 정책만 필터링
-- 온통청년 사업 종료일과 종료된 신청기간을 추천 전에 제외하고 사업기간과 신청기간을 분리
-- 온통청년의 전국 `zipCd` 오표기를 등록·주관 지자체명으로 교차 검증하고 `0~0세`는 연령 제한 없음으로 정규화
-- 2026-07-14 행정표준코드 현존 시·군·구 300개를 공식 5자리 코드와 연결한 전국 지역 정규화기 추가
-- 성남 `41130`, 해운대구 `26350`, 전주 `52110` 등 시·군·구를 온통청년 코드와 기업마당 시·도 태그로 일관되게 변환
-- `중구`, `고성군`처럼 여러 시·도에 같은 이름이 있으면 임의 추정하지 않고 시·도를 다시 확인
-- 정확 지역과 전국 결과를 우선하고, 둘 다 없을 때만 가까운 시·도 결과 최대 3건을 별도 참고 결과로 제공
-- 기업마당의 `전남광주` 결합형 16개 태그와 `광주`·`전남` 분리형 17개 태그를 모두 전국 범위로 정규화
-- 기업마당의 전 지역 태그를 그대로 신뢰하지 않고 공고 본문의 소재지·본사 이전·전입 조건을 교차 검증해 지자체 제한 공고를 재분류
-- `지역제한 없음`은 지자체 기관명·지역 태그보다 우선하고, 태그 누락은 전국으로 추정하지 않음
-- 기업마당 본문의 `예비창업자`, `창업 N년`, `업력`, `사업자등록` 조건을 구조화해 사업자 등록 불일치를 추천 전에 제외
-- 기업마당 조회 폭을 최대 5배로 넓히고 관심 분야 유사어를 우선 정렬해 뒤쪽의 관련 후보도 점수화
-- 점수는 전체 평가 기준 대비 확인된 일치 근거로 계산하고, 실제 비교 가능한 범위는 `evidence_coverage`로 분리
-- 구체적인 정책 검색어가 0건일 때 무관한 넓은 정책 분야로 바꾸지 않음
-- 월세·전세·금융 같은 구체 하위 유형은 주거·복지로 완화하거나 인접 지역 사업으로 대체하지 않고,
-  무결과이면 현재 조회 결과가 없다고 안내
-- `경기도 말고 서울로` 같은 지역 정정은 부정된 기존 지역이 아니라 정정 대상을 저장
-- 시·도만 확인된 사용자를 특정 시·군·구 전용 정책의 대상자로 간주하지 않음
-- Supabase에 최근 대화 8개, 프로필, 미완료 검색 계획을 저장·복원
-- Langfuse callback을 LangGraph 실행에 연결해 세션별 Router·Tool·응답 Trace 수집
-- 정책 검색 전에 유형별 필수 조건을 묻고 원래 요청으로 검색 재개
-- 온통청년 정책을 일자리, 주거, 교육·직업·훈련, 금융·복지·문화, 참여·기반으로 구분
-- 넓은 청년정책 문의는 관심 분야를 먼저 묻고, 취업 상태는 일자리 분야에서만 추가 확인
-- 일반 대화와 Router/Profile LLM에 최근 대화 문맥 전달
-- 동일한 고정 검색 실패 문구를 출처·검색어 기반 LLM 응답으로 교체
-- LLM Markdown·형식적 머리말·내부 필드명을 일반 채팅용 텍스트로 정리
-- 실제 null인 신청 정보만 후보별 `data_notice`로 전달하고 중복 자격 안내 제거
-- React 채팅 메시지 렌더링 수정과 프런트엔드 변경 CI 트리거 반영
-- Router 결과·부족 조건에 따른 SSE 상태 문구와 React 타이핑 영역 표시
-- React 채팅 목록·메시지·정책 카드를 로컬 저장소에서 복원하고 UUID 세션을 유지
-- 브라우저에서 확인된 거주 지역·만 나이를 최소 기본 프로필로 별도 저장해 새 채팅에도 전달
-- 광범위한 `청년 주거 정책을 알려줘` 요청을 특정 제도 설명과 구분해 추천 검색으로 라우팅
-- 설명 모드로 분류되더라도 주거 등 정책 분야 목록 요청은 지역·나이 조건을 확인하도록 방어 로직 추가
-- 온통청년 요청에서 오류를 유발하던 브라우저형 헤더를 제거하고 5xx를 한 번 재시도
-- 온통청년 호출 실패를 실제 결과 0건과 구분해 `정책이 없다`고 잘못 안내하지 않는 결정론적 장애 안내 추가
-- 브라우저 저장 전 민감정보 마스킹, 최근 20개 채팅·채팅별 50개 메시지 제한, 개별·전체 삭제
-- 주민등록번호·외국인등록번호·전화번호·이메일·계좌·카드 형태를 브라우저 전송 전에 차단하고 화면에는 삭제 표식으로 표시
-- API 직접 호출도 LangGraph·LLM·외부 정책 API·Langfuse 실행 전에 차단하며 Supabase 구조화 상태까지 재귀 마스킹
-- Ruff lint/format, pytest `164 passed`, 프런트 저장 회귀 `8 passed`, 프로덕션 빌드 통과
-- 최신 main `a89d1e3`의 GitHub Actions CI/CD와 GCE 내부 헬스체크 성공
+활성 검색 소스는 정확히 세 개다.
 
-## 현재 Agent 흐름
+| request kind | 소스 | 제공 범위 |
+| --- | --- | --- |
+| `youth_policy` | 온통청년 | 청년정책 |
+| `training` | 고용24 | 국민내일배움카드 훈련과정 |
+| `recruitment` | 고용24 | 채용행사·공채속보 보조정보 |
+
+- 한 요청에서는 선택된 Tool 하나만 호출한다.
+- 기업마당 API 검색, `/api/policies*`, RAG-lite, `PolicyItem`, 가중 점수 계산은
+  2026-07-15 제거됐다.
+- 창업·사업자 지원은 현재 MVP 범위 밖이다. 창업 질문은 LLM Router와 대화 생성기를
+  사용하는 일반 `out_of_scope` 응답으로 처리하되 외부 검색 Tool을 호출하거나 기업마당·
+  K-Startup을 제품 연동처럼 안내하지 않는다.
+- 레거시 UI DTO의 `match_score`, `evidence_coverage` 숫자 필드는 전송 호환용이며
+  추천 판단에 사용하지 않는다.
+
+## 현재 LangGraph
+
+등록 노드는 8개다.
 
 ```text
-FastAPI /api/chat 또는 /api/chat/stream
--> 브라우저 기본 프로필 중 region/age 수신
--> Supabase에서 recent_history/profile/pending_request 복원
--> Router LLM
-   -> RoutingDecision(action, response_mode, request_kind, search_query, resume_pending)
-   -> RESPOND
-      -> Conversation Node(response_mode: general / explain / out_of_scope)
-   -> SEARCH
-      -> Profile Extractor LLM
-      -> Missing Slot 검사
-      -> request_kind에 맞는 Tool 하나 호출
-         - youth_policy: 온통청년
-         - training: 고용24 훈련
-         - recruitment: 고용24 채용 보조
-         - business: 기업마당
-      -> 정책 후보는 Eligibility Scorer 적용
-      -> grounded LLM Response Composer
--> Guardrail
--> 최근 대화·프로필·pending_request를 Supabase에 저장
--> API 응답
+prepare_request
+├─ RESPOND / missing slots → direct_response → verify_answer
+└─ SEARCH → retrieve → assess_evidence
+                ├─ retryable UNAVAILABLE → retrieve (총 2회 이내)
+                ├─ 보정 가능한 NO_MATCH → rewrite_query → retrieve (1회)
+                ├─ 근거 없음 → direct_response → verify_answer
+                └─ 근거 있음 → build_answer → verify_answer
+                                           ├─ 수정 가능 → build_answer (1회)
+                                           ├─ 검증 실패 → direct_response → verify_answer
+                                           └─ 통과 → finalize → END
+direct_response 검증 실패 → direct_response(validation_fatal) → verify_answer → finalize
 ```
 
-Router의 정상 출력 예시:
+### 노드 책임
 
-```json
-{
-  "action": "SEARCH",
-  "response_mode": "recommend",
-  "request_kind": "training",
-  "search_query": "클라우드 엔지니어",
-  "resume_pending": false
-}
+| 노드 | 책임 |
+| --- | --- |
+| `prepare_request` | Router, typed route validation, profile extraction, pending 전이, missing slot 계산 |
+| `direct_response` | 일반/범위 밖/조건 질문/no-match/장애를 LLM 우선으로 작성하고 검증 실패 시 결정론적 fallback으로 수렴 |
+| `retrieve` | 선택된 세 소스 중 하나를 호출하고 `SearchOutcome` 생성 |
+| `assess_evidence` | source별 결정론적 무점수 gate와 제외 사유 기록 |
+| `rewrite_query` | hard condition을 유지하는 허용된 검색 표현만 최대 1회 보정 |
+| `build_answer` | 카드 수·소스·지역 범위만 LLM에 전달해 짧은 카드 안내를 작성하고 결정론적 확인 문구 적용 |
+| `verify_answer` | 최초 검색 말풍선의 카드 상세 중복, direct/status 환각, 민감정보 요구를 검증하고 revision budget 결정 |
+| `finalize` | 검증된 응답을 더 바꾸지 않고 최근 이력 갱신 |
+
+노드 수를 줄인 목적은 관측성을 포기하는 것이 아니라 bookkeeping 노드를 합치고
+실패 회복 edge를 명시하는 것이다. 내부 route/profile/slot 작업은 필요하면 child
+span으로 관측한다.
+
+## 검색 결과 계약
+
+`app/graph/search_contracts.py`의 `SearchOutcome`이 Repository/Tool과 그래프 사이의
+공통 경계다.
+
+```text
+status: success | no_match | unavailable | partial
+source: youth_policy | training | recruitment
+items
+requested_filters
+applied_filters
+warnings
+retryable
 ```
 
-## 모듈 책임
+- 키 미설정, 호출 실패, 파싱 실패 같은 guide 레코드는 후보가 아니라
+  `status/warnings/retryable`로 바뀐다.
+- `no_match`는 정상 조회 0건이고 `unavailable`은 정책 유무를 확인하지 못한
+  상태다. 사용자 문구와 retry edge가 다르다.
+- `partial`은 일부 하위 조회가 실패한 상태다. 확인된 후보가 있으면 범위
+  한정 경고를 붙여 제시하고, 확인된 후보까지 gate에서 탈락하면 전체
+  무결과로 단정하지 않는 고정 재시도 안내로 끝낸다.
+- HTTP 200이더라도 XML `<error>`·실패 `resultCode`는 빈 결과가 아니라
+  `unavailable`로 올린다.
+
+## 검색 결과 표시 계약
+
+- 최초 검색 성공 응답은 `reply` 말풍선과 최대 3개의 `recommendations` 카드로 분리한다.
+- 말풍선은 LLM이 카드 수·데이터 소스·`partial`/`nearby` 범위만 받아 1~2문장으로
+  작성한다. 후보 원문 전체는 이 LLM 호출에 전달하지 않는다.
+- 정책명·과정명·기업/기관명·지원 내용·금액·날짜·자격·신청 방법·공식 URL은 카드에만
+  표시한다. 말풍선에서 후보 제목이나 URL을 반복하면 검증 실패다.
+- 말풍선 끝에는 `최종 신청 가능 여부는 공식 공고나 담당 기관에서 한 번 더 확인해 주세요.`를
+  코드가 정확히 한 번 붙인다. LLM은 이 문구를 만들지 않는다.
+- LLM 생성이나 1회 수정이 검증에 실패해도 검증된 카드를 버리지 않고 같은 메타데이터의
+  결정론적 카드 요약으로 대체한다.
+- 사용자가 이후 `1번 자세히`, `신청 방법은?`처럼 직전 카드를 명시적으로 물을 때만
+  allowlist snapshot을 근거로 상세 말풍선과 공식 URL을 제공한다.
+- 후보 후속 LLM이 금액·날짜·URL을 바꾸어 두 번 검증에 실패하면 같은 snapshot의
+  공식 값을 결정론적으로 조립한다. snapshot이 없으면 번호를 추측하지 않고 재검색을 요청한다.
+
+## 결정론적 무점수 gate
+
+`app/graph/evidence.py`가 세 소스를 공통 경계에서 평가한다. 가중 합산이나 적합도
+점수는 없다.
+
+- 온통청년: 구조화 min/max 연령, 요청 지역, 구체 질의 관련성, 명시적 마감
+- 고용24 훈련: 공식 `srchTraArea1` 지역 코드 적용과 결과 시·도/시·군·구 후처리
+- 고용24 채용: `event`, `open_recruitment`만 허용하고 무필터 company 호출 계약은 완전 제거,
+  구조화 시·도/시·군·구와 요청한 신입·인턴 근거를 확인
+- gate 제외 사유와 전후 후보 수는 `evidence_assessment`에 남긴다.
+- 요청 지역이 있는데 후보 지역을 확인할 수 없거나 같은 시·도 안의 다른
+  시·군·구이면 카드·답변 후보에서 제외한다.
+- 확인할 수 없는 조건을 자동 적합으로 점수화하지 않는다.
+
+## 프로필 계약
+
+`app/graph/profile_contracts.py`의 `ProfileState`가 세션 프로필의 Pydantic
+allowlist다. 나이 범위, enum, 문자열 길이와 관심 분야 수를 필드별로 검증한다.
+upstream 필터나 evidence gate에 쓰이지 않는 졸업상태는 새로 추출·저장하지 않으며,
+API 응답의 기존 nullable 필드만 프런트 호환을 위해 유지한다.
+
+- 유효하고 명시된 값은 `SET`
+- 비어 있거나 잘못된 LLM 추출은 기존 값을 보존하는 `UNCHANGED`
+- “나이는 저장하지 마”, “지역을 지워줘”, “프로필 모두 삭제” 같은 명시 요청은
+  결정론적 `CLEAR`
+- `CLEAR`는 같은 턴의 충돌하는 추출보다 우선하고 RESPOND 경로에서도 적용
+
+## bounded recovery
+
+모든 cycle은 턴 상태 카운터로 제한된다.
+
+| 실패 | edge | 상한 | 소진 후 |
+| --- | --- | ---: | --- |
+| retryable source 장애 | `assess_evidence → retrieve` | 조회 총 2회 | source unavailable 안내 |
+| 허용된 정상 무결과 | `assess_evidence → rewrite_query → retrieve` | rewrite 1회, 조회 총 2회 내 | no-match 안내 |
+| 답변 검증 실패 | `verify_answer → build_answer/direct_response` | LLM revision 1회 | 결정론적 fallback 또는 안전 종료 |
+
+query rewrite는 지역·나이·상태·마감·월세/전세 같은 구체 주제를 완화하지 않는다.
+현재 구현은 제한된 deterministic rewrite만 허용한다.
+전체 턴은 60초, 개별 LLM 요청은 8초, 소스 조회 시도는 10초,
+Repository HTTP는 9초 상한이다. 최대 LLM 4회·소스 2회와 8초 예비 시간을
+포함한 bounded worst case가 60초에 들어오지 않으면 설정 로드 단계에서 거절한다.
+채용행사와 공채속보는 같은 소스
+시도 안에서 병렬 조회하며 한 endpoint 실패 시 확인된 결과만 `partial`로 보존한다.
+
+## 턴과 세션 상태
+
+- `fresh_turn_fields()`는 검색 문맥, `SearchOutcome`, gate 결과, retry/rewrite/revision
+  카운터, 결과 bucket, draft와 검증 상태를 매 요청 초기화한다.
+- pending은 `required_slots`와 `KEEP/RESUME/CANCEL/REPLACE` 전이를 사용한다.
+- `RESUME`은 현재 발화가 실제 required slot을 채웠을 때만 허용한다.
+- 일반 입력도 LLM Router가 의미를 판단한다. 인사·감사·취업 고민·일반 설명·범위 밖
+  요청까지 대화 생성 LLM이 최근 문맥과 검증된 프로필을 받아 작성한다. 카드 검색 요약,
+  조건 질문, 직전 후보 후속 질문, no-match/unavailable/partial 안내도 각각 근거가 제한된
+  LLM 프롬프트를 1차 경로로 사용하고, LLM 미설정·장애·재검증 실패 때만 고정 템플릿으로 수렴한다.
+- 범위 밖 여부는 LLM Router가 판단하되 최종 문구는 고정된 정책나침반 범위 안내를 사용한다.
+  첫 인사는 이전 대화가 없는데 `다시`, `오랜만`, `지난번` 같은 관계를 만들면 재검증한다.
+- `성남 거주`, `성남거주`처럼 `시·군·구` 접미사를 생략한 공식 지역명도 거주·나이
+  답변 문맥에서 인식한다. 임의 부분문자열은 지역으로 보지 않으며, 동명이인 별칭은
+  특정 시·도로 추정하지 않고 `region_detail`을 묻는다.
+- 검증 전의 tentative LLM route가 `REPLACE`를 제안해도 semantic guard가 일반
+  응답으로 복구하면 기존 pending을 `KEEP`한다.
+- 그래프는 전역 `MemorySaver` 없이 컴파일된다.
+- `SupabaseChatMemoryRepository`가 profile, 최근 8개 history, pending,
+  allowlist된 `last_presented_candidates`의 단일 세션 경계다.
+- Supabase 미설정·조회/저장 장애에서도 최대 2,048세션의 bounded local LRU
+  mirror가 같은 프로세스의 멀티턴 상태를 유지한다.
+- 원격 저장 실패 세션은 dirty로 표시해, 다음 load가 더 오래된 Supabase 행으로
+  로컬 CLEAR·pending·snapshot을 되돌리지 않게 한다.
+- `SessionLockPool`이 같은 프로세스·같은 세션의 load→graph→save를 직렬화한다.
+- 직전 후보 스냅샷은 최대 3건, source별 allowlist 필드만 저장하며 검증을 통과한
+  `success/partial` 검색 턴만 새 스냅샷을 만들 수 있다.
+- `chat_sessions.last_presented_candidates` additive migration 전 환경에서는 기존
+  `pending_request` JSONB의 예약 키에 같은 allowlist snapshot을 임시 보존한다. 읽을 때
+  예약 키를 pending 상태에서 분리하므로 그래프 슬롯 전이에는 노출되지 않는다.
+- 저장된 snapshot을 읽을 때도 source/type/scope/guide ID/URL을 다시 검증해
+  레거시 guide·company 레코드가 후속 답변으로 노출되지 않게 한다.
+- 세션 ID는 UUIDv4만 허용한다. 그래프 턴 deadline은 60초다.
+- 인프로세스 limiter는 세션당 분당 20회, IP당 분당 120회이며 초과 시
+  `429 Retry-After`를 반환한다.
+
+## API·UI 호환 계약
+
+React UI 변경과 충돌을 피하기 위해 다음 계약을 유지한다.
+
+- `POST /api/chat/stream` 요청: `session_id`, `message`, 선택적 `profile_defaults`
+- SSE event: `status`, `token`, `done`, `error`
+- `status.stage`: `accepted`, 실제로 실행된 8개 LangGraph 노드, `timeout`,
+  그래프를 실행하지 않는 보호 경로의 `complete`
+- SSE 경로는 `astream(updates, values)`로 노드 완료 상태를 즉시 전송하되,
+  내부 state·검증 전 초안은 전송하지 않는다. 최종 답변 `token`은
+  `verify_answer` 통과와 `finalize` 완료 후에만 전송한다.
+- `done`: `intent`, `missing_slots`, `recommendations`, `profile_defaults`, `trace_id`
+- `profile_defaults.age/region`의 `null`은 명시적 CLEAR다. 브라우저가 기존 값을
+  merge해 부활시키지 않도록 두 키를 항상 보낸다.
+- React 첫 안내는 온통청년 5개 공식 분야(`일자리`, `주거`, `교육·직업·훈련`,
+  `금융·복지·문화`, `참여·기반`)와 고용24 훈련·채용정보만 노출한다.
+- React 입력창 placeholder는 `청년 정책 및 훈련에 대해 질문해 주세요...`로
+  범용 정부 지원사업 검색 범위를 표방하지 않는다.
+- 추천 카드 DTO: `policy`, `match_score`, `evidence_coverage`, `match_reasons`,
+  `follow_up_checks`, `is_recommendable`, `recommendation_scope`, `deadline_status`
+- feedback: `POST /api/chat/feedback`와 Langfuse `user-thumbs` 연결
+
+추천 카드와 새 세션 스냅샷은 현재 턴의 gate와 `verify_answer`를 통과하고 상태가
+`success/partial`인 후보만 사용한다. 실제 조회까지 수행한 더 최근 검색이
+`no_match`·장애·검증 실패로 끝나면 과거 후보 번호가 “방금 결과”로 재사용되지 않도록
+snapshot을 명시적으로 비운다. 조건 질문·일반 응답은 기존 snapshot을 보존한다.
+
+## 운영 health와 배포 불변식
+
+| endpoint | 의미 |
+| --- | --- |
+| `/api/health` | 기존 클라이언트 호환 상태와 Langfuse 설정 표시 |
+| `/api/live` | 외부 의존성과 무관한 프로세스 생존, 200 |
+| `/api/ready` | release SHA, app env, Upstage/온통청년/Work24 훈련·채용/Supabase 구성 상태 |
+
+- 로컬/CI에서 필수 키가 없으면 `/api/ready`는 `200 degraded`다.
+- `APP_ENV=production`에서 필수 구성이 빠지면 `503 not_ready`다.
+- 응답에는 키·URL 값 자체를 내보내지 않는다.
+- readiness는 현재 구성 여부 검사다. 실제 upstream 연결이나 circuit 상태까지
+  확인하는 probe는 후속 범위다.
+
+CD 불변식:
+
+1. `RELEASE_SHA = workflow_run.head_sha`(수동 실행은 `github.sha`)
+2. checkout, image tag, `APP_RELEASE_SHA`가 같은 exact SHA를 사용
+3. 배포 대상은 mutable tag가 아니라 build output digest의
+   `ghcr.io/.../policy-compass-agent@sha256:...`
+4. `.current_image`와 `.previous_image`도 digest reference를 기록
+5. 컨테이너와 배포 작업은 `/api/ready`를 사용
+
+## 핵심 파일
 
 | 파일 | 책임 |
 | --- | --- |
-| `app/graph/contracts.py` | `Action`, `ResponseMode`, `RequestKind`, `RoutingDecision` 검증 계약 |
-| `app/graph/fallbacks.py` | LLM 장애 시 사용할 키워드·정규식 fallback |
-| `app/graph/nodes.py` | LangGraph 상태를 읽고 각 컴포넌트를 호출하는 노드 orchestration |
-| `app/graph/response_composer.py` | grounded LLM 응답과 결정론적 템플릿 fallback |
-| `app/graph/state.py` | `action`, `response_mode`, 호환 `intent`, 검색 계획과 결과 상태 |
-| `app/core/prompts.py` | Router, Profile, Conversation, Grounded Response 프롬프트 |
-| `app/core/llm.py` | Upstage Solar HTTP 클라이언트와 JSON 추출 |
-| `app/core/privacy.py` | 민감 식별정보 탐지·마스킹과 입력 차단 안내 |
-| `app/core/administrative_regions.py` | 행정표준코드 현존 시·군·구 300개 정적 스냅샷 |
-| `app/core/regions.py` | 사용자 지역·법정코드·기업마당 태그 정규화와 대표 좌표 기반 근접 거리 |
-| `app/core/relevance.py` | 관심 분야 유사어와 정책 본문 관련성 판정 |
-| `app/tools/executor.py` | Repository 예외를 안전하게 처리하는 Tool 경계 |
-| `app/repositories/` | 외부 API 호출과 응답 정규화 |
-| `app/graph/scoring.py` | 전체 기준 기반 적합도·근거 확인률·하드 불일치 판정 |
-| `app/repositories/chat_memory.py` | Supabase 최근 대화·프로필·미완료 요청 저장/복원 |
-| `data/chat_memory_schema.sql` | RLS가 적용된 대화 메모리 전용 스키마 |
-| `frontend/src/lib/chatStorage.ts` | React 표시 기록의 버전형 저장·복원, 보존 한도, 민감정보 마스킹 |
-| `frontend/src/components/PolicyCard.tsx` | 정확/전국/인접 지역 범위와 참고 거리 표시 |
+| `app/graph/graph.py` | 8개 노드와 bounded edge 조립 |
+| `app/graph/edges.py` | SearchOutcome와 budget 기반 분기 |
+| `app/graph/state.py` | 턴 상태와 retry/rewrite/revision counter |
+| `app/graph/search_contracts.py` | 검색 상태 공통 계약과 legacy guide adapter |
+| `app/graph/evidence.py` | 세 소스 결정론적 gate |
+| `app/graph/nodes.py` | 노드 orchestration |
+| `app/graph/validators.py` | 응답 역할·grounding 검증 |
+| `app/graph/response_composer.py` | source별 결정론적/grounded 응답 |
+| `app/api/routes/chat.py` | 동기·SSE·피드백 API 경계 |
+| `app/api/routes/health.py` | health/live/readiness |
+| `app/repositories/youthcenter.py` | 온통청년 정규화·조회 |
+| `app/repositories/work24_training.py` | Work24 훈련 지역 코드·조회 |
+| `app/repositories/work24_recruitment.py` | Work24 허용 채용 보조정보 조회 |
 
-`nodes.py`에서 보이는 `_heuristic_*`와 `_extract_training_search_keyword`는 호환용 import다. 실제 규칙은 모두 `fallbacks.py`에 있고 다음 경우에만 사용한다.
+## 알려진 남은 위험
 
-- Solar 키가 없음
-- Solar 호출 실패
-- Router JSON이 `RoutingDecision` 계약을 통과하지 못함
-- LLM과 프로필에서 검색어를 모두 얻지 못함
-
-## 실제 API 상태
-
-`.env`에는 아래 외부 API와 Supabase 설정이 있다. 값은 출력하거나 문서에 기록하지 않는다.
-
-| 데이터 소스 | 현재 확인 상태 | 다음 검증 |
-| --- | --- | --- |
-| Upstage Solar | 실제 Router와 Conversation LangGraph smoke test 성공 | 배포 환경 회귀 확인 |
-| 온통청년 | 브라우저형 헤더 제거 후 경기·만 24세·주거 live 정상 반환, 5xx 재시도와 장애/무결과 구분 완료 | 다른 정책 분야 대표 질의 회귀 확인 |
-| 고용24 훈련 | 실제 호출 성공, 3건과 상세 URL 확인 | Agent 전체 경로 회귀 확인 |
-| 고용24 채용 | 허용 3개 endpoint 실제 호출 성공, 3종 결과 확인 | Agent 전체 경로 회귀 확인 |
-| 기업마당 | 16/17개 지역 태그 형식, 소재지·이전·등록 조건 교차 검증, 부산 카페 창업 Agent 전체 경로 확인 | 배포 환경 회귀 확인 |
-| Supabase | `chat_logs`, `chat_sessions` 저장·복원과 RLS 차단 성공 이력 있음 | 로컬 조회 `401` 1회 원인(키·RLS)과 서버 재시작 복원 재확인 |
-
-온통청년은 구형 `opi/youthPlcyList.do`/`openApiVlak`가 아니라 `go/ythip/getPlcy`/`apiKeyNm`을 사용한다. 응답은 JSON이며 정책 목록은 `result.youthPolicyList`에 있다.
-
-## 방금 완료한 리팩터링
-
-- `RoutingDecision(action, response_mode, request_kind, search_query)` 계약 추가
-- Router LLM 판단을 키워드가 덮어쓰던 로직 제거
-- Router가 Tool 입력용 `search_query` 생성
-- `search_query`를 훈련·채용·정책 Tool 입력에 우선 사용
-- Explain/General 노드를 제거하고 Conversation Node 하나로 통합
-- 검색 없는 설명은 `RESPOND/explain`, 공식 데이터 설명은 `SEARCH/explain`으로 분리
-- 외부 API 후보 결과도 데이터 범위 안에서 LLM이 설명
-- 기업마당과 온통청년 동시 호출 제거
-- 창업 질문은 기업마당, 청년정책 질문은 온통청년으로 분리
-- 민감할 수 있는 검색어 원문을 로그에 남기지 않고 존재 여부만 기록
-- Router에 최근 대화, 누적 프로필, `pending_request`를 전달하고 `resume_pending` 계약 추가
-- 조건 확인 질문 시 원래 요청·Tool·검색어를 저장하고 후속 답변 뒤 같은 검색 재개
-- 청년정책은 지역·만 나이·정책 분야를 확인하고 일자리 분야만 취업 상태를 추가 확인하며, 훈련/채용은 직무·지역,
-  창업지원은 지역·창업 상태·사업자 등록 여부를 필요한 경우 먼저 확인
-- 새 관심 분야가 확인되면 과거 `interest_fields`를 무조건 합치지 않고 현재 값으로 교체
-- 일반 Conversation Node에 최근 8개 메시지를 전달
-- LLM 응답 후보에서 큰 `raw` payload를 제거하고 문자열 길이를 제한
-- 주민번호·카드번호 형태 마스킹, 메시지 4,000자 제한, Supabase 요청 3초 timeout 적용
-- `session_id`를 안전한 문자 128자 이하로 제한
-- React `Chat.id`를 UUID로 생성해 백엔드 `session_id`로 유지하고 새로고침 뒤 화면과 문맥을 함께 복원
-- 로컬 표시 기록에 최근 채팅·메시지 보존 한도와 삭제 UI 적용
-- 대화 테이블 RLS 활성화, 백엔드 `SUPABASE_KEY`는 secret/service_role 키 사용
-- pgvector 4,096차원에서 만들 수 없는 HNSW 인덱스 정의 제거
-
-실제 Solar 확인 결과:
-
-```text
-개발 교육에 대한 고민 -> RESPOND / general / search_query 없음
-국비훈련 장점 설명 -> RESPOND / explain / search_query 없음
-청년도약계좌 현재 조건 설명 -> SEARCH / explain / 청년도약계좌
-클라우드 국비과정 검색 -> SEARCH / recommend / 클라우드 엔지니어
-```
-
-## 2026-07-14 지역 검색·스코어링 안정화
-
-- `exact`, `nationwide`, `nearby`, `unknown` 범위를 정책 후보 계약에 추가했다.
-- 정확 지역·전국 후보가 있으면 타 지역 후보는 응답에서 완전히 제외한다.
-- 정확 지역·전국 후보가 하나도 없을 때만 대표 좌표 직선거리 순으로 인접 시·도 결과 최대 3건을 제공한다.
-- 인접 결과는 추천 점수 0점의 `nearby_reference`로 분리하고 `인접 지역 참고`, 예상 직선거리, 거주 요건 확인 문구를 표시한다.
-- 기업마당 인접 탐색은 가장 가까운 5개 시·도까지만 조회해 불필요한 연속 API 호출을 제한한다.
-- 기업마당 API가 지자체 공고에도 모든 지역 태그를 붙이는 사례는 본문의 소재지·이전 조건으로 다시 지역 제한을 판정한다.
-- `광주`·`전남` 분리형을 포함한 17개 지역 태그는 전국으로 판정하고, `지역제한 없음`도 전국 근거로 우선한다.
-- 사업자 미등록 사용자는 기창업자 전용 공고에서 하드 제외하고, 관심 분야 20%를 포함한 전체 100% 가중치 기준으로 순위를 계산한다.
-- 카드에는 `요청 지역 일치`·`전국 대상`·`인접 지역 참고`, 추천 적합도, 근거 확인률을 각각 표시한다.
-- 로컬 UI의 부산 해운대구 카페 예비창업자 질의에서 타 지역 제한·기창업자 전용 공고가 제외되고 농식품 관련 전국 공고가 68점으로 1순위에 표시됐다.
-- 같은 화면을 새로고침한 뒤 68점과 전국 대상 배지 5개가 그대로 복원되는 것을 확인했다.
-- 온통청년의 전국 시군구 코드 목록이 지방자치단체 사업에도 들어오는 사례를 기관명으로 교차 검증한다.
-- 고정 신청기간의 마지막 날짜가 지났으면 사업 종료일이 없어도 만료 공고로 제외한다.
-- 로컬 UI에서 `성남시에 사는 만 25세 청년이야. 주거 관련 정책 찾아줘`를 재검증했다. 의성군 사업과 2025년 마감 장학금은 제외되고 국토교통부 전국 정책만 표시됐다.
-- 행정표준코드관리시스템의 2026-07-14 현존 시·군·구 300개를 정적 스냅샷으로 추가하고 모든 행을 시·도 문맥과 함께 복원하는 회귀 테스트를 추가했다.
-- 해운대구 live 검색에서 온통청년 `26350`을 사용하고 부산 정확 정책 2건과 전국 정책만 화면에 표시되는 것을 확인했다.
-- 전주시는 온통청년 `52110`, 기업마당 `전북`으로 호출되는 것을 확인했다.
-- `고성군` 입력을 강원으로 임의 보완하던 LLM 출력을 현재 발화의 공식 지역 표현으로 덮어쓰도록 변경했다.
-- 로컬 UI에서 `고성군`은 시·도 확인 질문을 하고, 후속 `경남 고성군이야` 뒤 원래 주거 검색을 재개하는 것을 확인했다.
-
-## 2026-07-14 새 채팅 프로필·온통청년 조회 안정화
-
-- 프로필은 계속 채팅별 Supabase 문맥으로 유지하되, 비민감 기본값인 `region`, `age`만 브라우저에 별도 저장한다.
-- 새 채팅 요청은 브라우저 기본값을 전달하고, 같은 채팅에서 이미 확인한 Supabase 프로필이 있으면 그 값을 우선한다.
-- 전체 로컬 기록 삭제 시 기본 프로필도 함께 삭제하며, 다른 기기나 브라우저에는 공유하지 않는다.
-- `청년 주거 지원 정책에 대해 알려줘`를 광범위한 현재 정책 목록 요청으로 정의해 `SEARCH / recommend / youth_policy / 주거` 예시를 Router 프롬프트에 추가했다.
-- 온통청년 HTTP 요청의 브라우저형 헤더와 `pageSize=10` 조합에서 재현된 500을 제거하고, 실패 시 최대 2회 호출 후 장애 안내로 전환한다.
-- 로컬 API에서 새 세션에 `경기·만 24세` 기본값을 전달한 동일 질문이 `RECOMMEND`, 부족 조건 없음, 전국 주거 정책 반환으로 확인됐다.
-- 실제 UI에서 기존 `경남 고성군·만 25세` 조건을 동기화한 뒤 새 채팅에서도 조건 재질문 없이 같은 지역·나이로 주거 정책을 추천했다.
+1. UUIDv4는 소유권 경계가 아니다. multi-worker owner binding이 아직 없다.
+2. `SessionLockPool`은 단일 프로세스만 보호한다. DB optimistic version은 남아 있다.
+3. Supabase 세션/로그의 서버 삭제 API와 TTL이 없다.
+4. answer validator는 후보명·URL과 후보에 없는 구조화 금액·날짜를 차단하지만 완전한 claim-field-citation 검증은 남아 있다.
+5. SSE 노드 상태는 실시간으로 전송하지만, `token`은 검증이 끝난 완성
+   답변을 나눠 보내는 방식이며 실제 LLM token stream이 아니다.
+6. 인프로세스 rate limiter는 multi-worker 전체 쿼터를 공유하지 않는다.
+7. `/api/ready`는 구성 상태만 확인하고 upstream 실제 연결·circuit 상태를 확인하지 않는다.
+8. 새 8-node/SearchOutcome 변경분의 실제 GCE 배포와 live 대표 질의 회귀가 필요하다.
+9. 과거 Langfuse 93.3%는 구 그래프의 기계적 smoke baseline이며 현재 품질 근거가 아니다.
 
 ## 다음 작업 순서
 
-1. 외부 배포 URL의 `/`, `/api/health`, `/docs`와 API별 대표 질문을 수동 확인한다.
-2. 로컬 Supabase 키·RLS를 확인하고 같은 UUID로 서버 재시작 뒤 문맥 복원을 다시 검증한다.
-3. 훈련·채용·창업 Agent 전체 경로와 API 후보 밖 사실 생성 여부를 QA한다.
-4. Day5 Router 평가표로 질문 유형별 SSE `status`와 Tool 단일 선택을 수동 QA한다.
-5. 발표용 핵심 시나리오와 외부 API 장애 fallback 시나리오를 확정한다.
-6. 외부 공개 전 로그인 기반 세션 소유권과 Supabase 서버 로그의 보존 기간·삭제 API를 설계한다.
-7. 같은 `session_id`의 동시 요청 충돌과 Supabase 장애 지표를 보완한다.
+1. claim-candidate-field-citation 검증과 semantic Langfuse 평가를 보강한다.
+2. multi-worker owner binding과 DB optimistic version을 추가한다.
+3. 서버 세션/로그 TTL·삭제 API와 사용자 고지를 추가한다.
+4. 분산 rate limit이 필요할 운영 규모와 저장소를 결정한다.
+5. exact SHA/digest 배포본에서 `/api/live`, `/api/ready`, 세 Tool과 창업 out-of-scope를 회귀한다.
 
-## 로컬 검증 명령
+## 로컬 검증
 
 ```bash
 git status --short --branch
@@ -239,54 +291,12 @@ uv run pytest tests -q
 cd frontend && pnpm test && pnpm run build
 ```
 
-현재 기준 기대 결과는 Python `164 passed`, 프런트 저장 회귀 `8 passed`다. 테스트는 외부 키를 비워 네트워크 없이 재현 가능해야 한다.
-
-## 핵심 수동 테스트
-
-```text
-요즘 개발 교육을 듣고 있는데 잘하고 있는지 모르겠어
-서울에서 클라우드 엔지니어 국비과정 찾아줘
-서울 사는 만 28세 미취업자인데 받을 수 있는 청년정책 찾아줘
-서울에서 데이터 분석 신입 채용정보를 찾아줘
-카페 창업 지원사업을 추천해줘
-성남시에 사는 만 25세 청년이야. 주거 관련 정책 찾아줘
-부산 해운대구에 사는 만 25세 청년이야. 주거 관련 정책 찾아줘
-고성군에 사는 만 25세 청년이야. 주거 관련 정책 찾아줘
-경남 고성군이야
-국비지원 훈련을 받으면 뭐가 좋아?
-거주지원을 받고 싶은데 관련 정책 있어?
-서울에 사는 만 25세 취업 준비생이야
-청년 지원 정책에 대한 정보를 얻고 싶어
-서울 만 24세
-거주지원 정책 정보를 원해
-```
-
-확인 항목:
-
-- `routing_source=llm`인지 확인
-- `request_kind`가 질문 의미와 일치하는지 확인
-- `RESPOND` 질문은 Tool을 호출하지 않고 `SEARCH` 질문만 Tool을 호출하는지 확인
-- 검색 질문에서 선택된 Tool 하나만 호출하는지 확인
-- API 결과에 없는 사실을 만들지 않는지 확인
-- 원문 링크와 권한 제한 안내가 유지되는지 확인
-- 조건 답변 뒤 원래 정책 주제(예: 주거)로 검색을 재개하는지 확인
-- 포괄 청년정책 문의에서 일자리를 추정하지 않고 공식 5개 정책 분야를 묻는지 확인
-- 주거·교육·복지·문화·참여 분야에서 취업·창업 상태를 불필요하게 묻지 않는지 확인
-- 같은 session_id로 서버 재시작 후 최근 대화와 프로필이 복원되는지 확인
-- 새로고침 뒤 채팅 목록·활성 채팅·메시지·정책 카드가 복원되는지 확인
-- 새로고침 뒤 주거 조건 후속 답변이 같은 UUID 세션으로 원래 검색을 재개하는지 확인
-- 개별·전체 로컬 기록 삭제가 새로고침 뒤에도 유지되는지 확인
-- 정확 지역·전국 결과가 있으면 타 지역 후보가 섞이지 않는지 확인
-- 정확 지역·전국 결과가 모두 없을 때만 `인접 지역 참고`와 직선거리가 표시되는지 확인
-- 신청기간이 지난 온통청년 공고와 `0~0세` 표현이 추천 응답에 노출되지 않는지 확인
-- 시·군·구가 공식 5자리 온통청년 코드와 기업마당 시·도 태그로 변환되는지 확인
-- 동명이인 시·군·구는 시·도를 추정하지 않고 확인 질문 뒤 원래 검색을 재개하는지 확인
+로컬 전체 suite는 통과했다. 테스트는 외부 키와 네트워크 없이 결정적으로 통과해야
+하며, 테스트 개수는 coverage 추가에 따라 변하므로 고정 숫자를 기준으로 사용하지 않는다.
 
 ## 비밀값 및 Git 주의사항
 
-- `.env`는 Git에 추가하지 않는다.
-- API 키 값, 전체 인증 URL, 인증 헤더를 로그·문서·캡처에 남기지 않는다.
-- 외부 API live 검증 로그에는 상태·건수·정규화 유형만 남긴다.
-- `SUPABASE_KEY`에는 publishable/anon 키가 아니라 서버 전용 secret/service_role 키를 넣는다.
-- 현재 session_id는 인증된 사용자 식별자가 아니므로 외부 공개 전 소유권 검증이 필요하다.
-- 기존 사용자 변경을 되돌리지 않는다.
+- `.env`는 커밋하지 않는다.
+- API 키, 인증 URL query, authorization header를 로그·문서·캡처에 남기지 않는다.
+- `SUPABASE_KEY`는 브라우저에 전달하지 않는다.
+- 기존 사용자/팀원 변경을 되돌리지 않는다.

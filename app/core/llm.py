@@ -2,8 +2,6 @@
 
 API 키가 없거나 호출이 실패하면 LLMUnavailableError 를 발생시켜, 상위
 LangGraph 노드가 규칙 기반 fallback 로직으로 안전하게 전환할 수 있도록 한다.
-(기획서: "기업마당 API 호출이 실패하거나 API 키가 없는 경우에도 데모 흐름이
-중단되지 않도록 한다" 원칙을 LLM 계층에도 동일하게 적용)
 """
 
 from __future__ import annotations
@@ -11,11 +9,12 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import AsyncIterator
+from contextlib import nullcontext
 
 import httpx
 
 from app.core.config import get_settings
+from app.core.observability import get_langfuse_client
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +37,7 @@ class SolarLLMClient:
         *,
         temperature: float = 0.3,
         response_format_json: bool = False,
+        operation_name: str = "solar-chat",
     ) -> str:
         if not self.is_configured:
             raise LLMUnavailableError("UPSTAGE_API_KEY 가 설정되지 않았습니다.")
@@ -53,43 +53,39 @@ class SolarLLMClient:
         headers = {"Authorization": f"Bearer {self._settings.upstage_api_key}"}
         url = f"{self._settings.upstage_base_url}/chat/completions"
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-            return data["choices"][0]["message"]["content"]
-
-    async def stream_complete(self, messages: list[dict[str, str]], *, temperature: float = 0.3) -> AsyncIterator[str]:
-        if not self.is_configured:
-            raise LLMUnavailableError("UPSTAGE_API_KEY 가 설정되지 않았습니다.")
-
-        payload = {
-            "model": self._settings.upstage_model,
-            "messages": messages,
-            "temperature": temperature,
-            "stream": True,
-        }
-        headers = {"Authorization": f"Bearer {self._settings.upstage_api_key}"}
-        url = f"{self._settings.upstage_base_url}/chat/completions"
-
-        async with (
-            httpx.AsyncClient(timeout=60) as client,
-            client.stream("POST", url, json=payload, headers=headers) as response,
-        ):
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if not line or not line.startswith("data:"):
-                    continue
-                data_str = line.removeprefix("data:").strip()
-                if data_str == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(data_str)
-                except json.JSONDecodeError:
-                    continue
-                delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content")
-                if delta:
-                    yield delta
+        langfuse = get_langfuse_client()
+        observation = (
+            langfuse.start_as_current_observation(
+                name=operation_name,
+                as_type="generation",
+                input={"message_count": len(messages)},
+                model=self._settings.upstage_model,
+                model_parameters={
+                    "temperature": temperature,
+                    "response_format": "json_object" if response_format_json else "text",
+                },
+            )
+            if langfuse is not None
+            else nullcontext(None)
+        )
+        with observation as generation:
+            async with httpx.AsyncClient(timeout=self._settings.llm_request_timeout_seconds) as client:
+                response = await client.post(url, json=payload, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+            content = data["choices"][0]["message"]["content"]
+            if generation is not None:
+                usage = data.get("usage") or {}
+                generation.update(
+                    output={"characters": len(content)},
+                    usage_details={
+                        "input": int(usage.get("prompt_tokens") or 0),
+                        "output": int(usage.get("completion_tokens") or 0),
+                        "total": int(usage.get("total_tokens") or 0),
+                    },
+                    metadata={"stage": operation_name},
+                )
+            return content
 
 
 def extract_json(text: str) -> dict:
@@ -100,5 +96,6 @@ def extract_json(text: str) -> dict:
     try:
         return json.loads(match.group(0))
     except json.JSONDecodeError:
-        logger.warning("LLM 응답에서 JSON 파싱에 실패했습니다: %s", text)
+        # 모델 원문에는 사용자 프로필과 대화 문맥이 포함될 수 있으므로 로그에 남기지 않는다.
+        logger.warning("LLM 응답에서 JSON 파싱에 실패했습니다.")
         return {}

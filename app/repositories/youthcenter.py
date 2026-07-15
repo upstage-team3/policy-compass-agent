@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from app.core.config import get_settings
+from app.core.config import get_settings, source_http_timeout
 from app.core.http import log_external_api_error
 from app.core.regions import (
     SIDO_CODE_PREFIXES,
@@ -18,6 +18,7 @@ from app.core.regions import (
     youth_policy_region_scope,
     youth_region_label,
 )
+from app.core.xml_utils import xml_error_message
 from app.tools.schemas import YouthPolicyItem, YouthPolicySearchInput
 
 logger = logging.getLogger(__name__)
@@ -44,14 +45,12 @@ _GENERIC_POLICY_QUERIES = {
 _POLICY_TOPIC_ALIASES = (
     (("거주지원", "주거지원", "주거비", "월세", "전세", "주거"), "주거"),
     (("취업지원", "구직지원", "취업", "구직", "일경험", "일자리"), "취업"),
-    (("창업지원", "창업"), "창업"),
     (("교육지원", "직업훈련", "역량강화", "교육", "훈련"), "교육"),
     (("금융지원", "자산형성", "복지지원", "생활지원", "문화지원", "금융", "복지", "문화"), "복지"),
     (("청년참여", "청년권리", "정책참여", "참여", "권리", "기반"), "참여"),
 )
 _REGION_PREFIXES = SIDO_CODE_PREFIXES
 _NEARBY_RESULT_LIMIT = 3
-_FETCH_ATTEMPTS = 2
 _BROAD_POLICY_TOPIC_MARKERS = (
     "취업지원",
     "구직지원",
@@ -117,11 +116,15 @@ def normalize_youth_policy_items(xml_text: str) -> list[YouthPolicyItem]:
     for idx, node in enumerate(records, start=1):
         values = _record_values(node)
         title = _first(values, "polyBizSjnm", "plcyNm", "policyName", "title") or "청년정책명 확인 필요"
+        min_age, max_age, age_restricted = _age_bounds(values)
         item = YouthPolicyItem(
             policy_id=_first(values, "bizId", "plcyNo", "policyId", "id") or str(idx),
             title=title,
             organization=_first(values, "cnsgNmor", "sprvsnInstCdNm", "operInstCdNm", "operOrgan", "organization"),
             region=_effective_region_label(values) or _first(values, "regionNm", "region", "polyBizSecd"),
+            min_age=min_age,
+            max_age=max_age,
+            age_restricted=age_restricted,
             target_summary=_first(values, "ageInfo", "plcySprtTrgtCn", "target", "rqutPrdCn"),
             support_summary=_first(values, "sporCn", "plcySprtCn", "support", "content"),
             business_period=_business_period(values),
@@ -147,6 +150,7 @@ def normalize_youth_policy_json(payload: dict[str, Any]) -> list[YouthPolicyItem
         if not isinstance(record, dict):
             continue
         values = {key: _compact_text(str(value)) for key, value in record.items() if value is not None}
+        min_age, max_age, age_restricted = _age_bounds(values)
         target_parts = [
             _first(values, "ptcpPrpTrgtCn", "addAplyQlfcCndCn"),
             _age_summary(values),
@@ -163,6 +167,9 @@ def normalize_youth_policy_json(payload: dict[str, Any]) -> list[YouthPolicyItem
                     "rgtrHghrkInstCdNm",
                 ),
                 region=_effective_region_label(values) or _first(values, "regionNm", "region"),
+                min_age=min_age,
+                max_age=max_age,
+                age_restricted=age_restricted,
                 target_summary=" / ".join(part for part in target_parts if part) or None,
                 support_summary=_first(values, "plcySprtCn", "plcyExplnCn", "support"),
                 business_period=_business_period(values),
@@ -176,15 +183,45 @@ def normalize_youth_policy_json(payload: dict[str, Any]) -> list[YouthPolicyItem
     return items
 
 
+def _positive_age(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        age = int(value)
+    except (TypeError, ValueError):
+        return None
+    return age if age > 0 else None
+
+
+def _age_bounds(values: dict[str, str | None]) -> tuple[int | None, int | None, bool | None]:
+    limit_flag = (values.get("sprtTrgtAgeLmtYn") or "").strip().upper()
+    if limit_flag == "N":
+        return None, None, False
+
+    minimum = _positive_age(values.get("sprtTrgtMinAge"))
+    maximum = _positive_age(values.get("sprtTrgtMaxAge"))
+    if minimum is not None or maximum is not None:
+        return minimum, maximum, True
+
+    raw_minimum = values.get("sprtTrgtMinAge")
+    raw_maximum = values.get("sprtTrgtMaxAge")
+    if raw_minimum == "0" or raw_maximum == "0":
+        return None, None, False
+    if limit_flag == "Y":
+        return None, None, True
+    return None, None, None
+
+
 def _age_summary(values: dict[str, str | None]) -> str | None:
-    if values.get("sprtTrgtAgeLmtYn") == "N":
+    minimum, maximum, age_restricted = _age_bounds(values)
+    if age_restricted is False:
         return "연령 제한 없음"
-    minimum = values.get("sprtTrgtMinAge")
-    maximum = values.get("sprtTrgtMaxAge")
-    if minimum == "0" and maximum == "0":
-        return "연령 제한 없음"
-    if minimum and maximum:
+    if minimum is not None and maximum is not None:
         return f"만 {minimum}~{maximum}세"
+    if minimum is not None:
+        return f"만 {minimum}세 이상"
+    if maximum is not None:
+        return f"만 {maximum}세 이하"
     return None
 
 
@@ -418,7 +455,18 @@ class YouthCenterRepository:
         failed_fetches = 0
         allow_nearby_results = not is_narrow_youth_policy_query(query.keywords)
 
-        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+        def with_partial_warning(items: list[YouthPolicyItem]) -> list[YouthPolicyItem]:
+            selected = items[: query.page_size]
+            if failed_fetches:
+                selected.append(
+                    youth_policy_fallback_guide("온통청년 일부 조회가 일시적으로 완료되지 않아 확인된 결과만 안내해요.")
+                )
+            return selected
+
+        async with httpx.AsyncClient(
+            timeout=source_http_timeout(self._settings),
+            follow_redirects=False,
+        ) as client:
             nearby_pool: list[YouthPolicyItem] = []
             resolved_region = resolve_region(query.region)
 
@@ -442,22 +490,23 @@ class YouthCenterRepository:
                     exact_items = await fetch_active(exact_params)
                     exact_matches = _mark_youth_region_matches(exact_items, query.region)
                     if exact_matches:
-                        return exact_matches[: query.page_size]
+                        return with_partial_warning(exact_matches)
 
                 broad_items = await fetch_active(params)
                 primary_matches = _mark_youth_region_matches(broad_items, query.region)
                 if primary_matches:
-                    return primary_matches[: query.page_size]
+                    return with_partial_warning(primary_matches)
                 if allow_nearby_results:
                     nearby_pool.extend(_nearby_youth_policies(broad_items, query.region))
 
         if nearby_pool:
-            return _nearby_youth_policies(nearby_pool, query.region)
+            return with_partial_warning(_nearby_youth_policies(nearby_pool, query.region))
         if failed_fetches and not successful_fetches:
             logger.warning("[캐시 폴백] 온통청년 API 호출 전면 실패 → 캐시 조회 시도")
             cached = await self._fallback_search(query)
             if cached:
                 return cached
+        if failed_fetches:
             return [
                 youth_policy_fallback_guide(
                     "온통청년 API가 일시적으로 응답하지 않아 정책 유무를 확인하지 못했어요. 잠시 후 다시 검색해주세요."
@@ -471,21 +520,14 @@ class YouthCenterRepository:
         api_url: str,
         params: dict[str, str],
     ) -> list[YouthPolicyItem]:
-        response: httpx.Response | None = None
-        last_error: Exception | None = None
-        for _attempt in range(_FETCH_ATTEMPTS):
-            try:
-                response = await client.get(api_url, params=params)
-                response.raise_for_status()
-                break
-            except Exception as exc:  # noqa: BLE001
-                last_error = exc
-                response = None
-
-        if response is None:
-            assert last_error is not None
-            log_external_api_error(logger, "온통청년 API", last_error)
-            raise YouthCenterAPIUnavailableError from last_error
+        try:
+            response = await client.get(api_url, params=params)
+            response.raise_for_status()
+        except Exception as exc:  # noqa: BLE001
+            # Retry is owned by the traceable retrieve→assess_evidence graph
+            # edge, so the repository must not add a hidden second attempt.
+            log_external_api_error(logger, "온통청년 API", exc)
+            raise YouthCenterAPIUnavailableError from exc
 
         if "json" in response.headers.get("content-type", "").lower() or response.text.lstrip().startswith("{"):
             try:
@@ -499,6 +541,10 @@ class YouthCenterRepository:
             return normalize_youth_policy_json(payload)
 
         try:
+            root = ET.fromstring(response.text)
+            if xml_error_message(root, record_tags={"youthpolicy", "policy", "item", "plcy"}):
+                logger.warning("온통청년 XML 오류 응답")
+                raise YouthCenterAPIUnavailableError
             return normalize_youth_policy_items(response.text)
         except ET.ParseError:
             logger.warning("온통청년 XML 파싱 실패")

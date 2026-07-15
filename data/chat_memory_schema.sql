@@ -11,15 +11,26 @@ create table if not exists chat_logs (
 );
 
 create index if not exists chat_logs_session_id_idx
-    on chat_logs (session_id, created_at desc);
+    on chat_logs (session_id, created_at desc, id desc);
 
 create table if not exists chat_sessions (
     session_id text primary key,
     profile jsonb not null default '{}'::jsonb,
     pending_request jsonb not null default '{}'::jsonb,
+    -- 후속 설명에 필요한 제목·공식 필드·URL만 저장하며 raw payload는 저장하지 않는다.
+    last_presented_candidates jsonb not null default '[]'::jsonb,
+    -- 후보가 0건이어도 후속 필터 수정(예: 지역 제한 해제)에 사용할 직전 검색 계획.
+    last_search_plan jsonb not null default '{}'::jsonb,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );
+
+-- 기존 설치에 대한 비파괴 마이그레이션.
+alter table chat_sessions
+    add column if not exists last_presented_candidates jsonb not null default '[]'::jsonb;
+
+alter table chat_sessions
+    add column if not exists last_search_plan jsonb not null default '{}'::jsonb;
 
 create index if not exists chat_sessions_updated_at_idx
     on chat_sessions (updated_at desc);

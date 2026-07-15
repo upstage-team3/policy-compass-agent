@@ -7,7 +7,6 @@ from fastapi.testclient import TestClient
 
 # LLM/외부 API 키 없이 규칙 기반 fallback 경로로 테스트가 항상 동작하도록 강제한다.
 os.environ["UPSTAGE_API_KEY"] = ""
-os.environ["BIZINFO_API_KEY"] = ""
 os.environ["YOUTHCENTER_POLICY_API_KEY"] = ""
 os.environ["EMPLOYMENT24_TRAINING_API_KEY"] = ""
 os.environ["EMPLOYMENT24_JOB_API_KEY"] = ""

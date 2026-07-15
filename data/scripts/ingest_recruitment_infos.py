@@ -1,4 +1,4 @@
-"""고용24 채용행사/공채속보/공채기업정보를 API로 가져와 Supabase
+"""고용24 채용행사/공채속보를 API로 가져와 Supabase
 recruitment_infos 테이블에 저장하는 배치 스크립트.
 
 Work24RecruitmentRepository.search()를 거치지 않고 API 호출 + 정규화 함수를 직접
@@ -32,7 +32,6 @@ _ENDPOINTS: tuple[tuple[str, str, str], ...] = (
     # (item_type, label, settings 필드명)
     ("open_recruitment", "공채속보", "employment24_open_recruitment_api_url"),
     ("event", "채용행사", "employment24_job_event_api_url"),
-    ("company", "공채기업정보", "employment24_company_api_url"),
 )
 
 
@@ -111,8 +110,10 @@ def upsert_rows(settings: Settings, rows: list[dict[str, Any]]) -> None:
 
 
 def prune_expired_rows(settings: Settings) -> None:
-    """end_date가 오늘보다 지난 채용정보를 삭제한다. end_date가 없는(NULL, 공채기업정보
-    등 원래 기간 개념이 없는 항목) 행은 만료 여부를 판단할 수 없으니 그대로 둔다."""
+    """end_date가 오늘보다 지난 채용정보를 삭제한다.
+
+    종료일이 없는 행은 만료 여부를 판단할 수 없으므로 그대로 둔다.
+    """
 
     today = datetime.now(UTC).date().isoformat()
     headers = {
